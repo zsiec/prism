@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -68,17 +70,27 @@ type MoQSession struct {
 	lastAudioTsMS  atomic.Int64
 }
 
+// MoQSessionConfig holds the parameters for creating a new MoQ session.
+type MoQSessionConfig struct {
+	ID            string
+	Session       *webtransport.Session
+	Control       webtransport.Stream
+	StreamKey     string
+	Relay         *Relay
+	StatsProvider StatsProviderFunc
+}
+
 // NewMoQSession creates a new MoQ session for the given stream key.
-func NewMoQSession(id string, session *webtransport.Session, control webtransport.Stream, streamKey string, relay *Relay, statsProvider StatsProviderFunc) *MoQSession {
+func NewMoQSession(cfg MoQSessionConfig) *MoQSession {
 	return &MoQSession{
-		id:            id,
-		log:           slog.With("session", id, "stream", streamKey),
-		streamKey:     streamKey,
-		session:       session,
-		control:       control,
-		controlReader: bufio.NewReader(control),
-		relay:         relay,
-		statsProvider: statsProvider,
+		id:            cfg.ID,
+		log:           slog.With("session", cfg.ID, "stream", cfg.StreamKey),
+		streamKey:     cfg.StreamKey,
+		session:       cfg.Session,
+		control:       cfg.Control,
+		controlReader: bufio.NewReader(cfg.Control),
+		relay:         cfg.Relay,
+		statsProvider: cfg.StatsProvider,
 		subscriptions: make(map[string]*moqTrackSub),
 	}
 }
@@ -250,10 +262,9 @@ func (m *MoQSession) handleSubscribe(ctx context.Context, sub moq.Subscribe) {
 
 	default:
 		// Check for audio tracks: "audio0", "audio1", etc.
-		if len(trackName) >= 6 && trackName[:5] == "audio" {
-			audioIdx := int(trackName[5] - '0')
-			if audioIdx >= 0 && audioIdx < 10 {
-				m.handleMediaSubscribe(ctx, sub, alias, trackName, "audio", audioIdx)
+		if suffix, ok := strings.CutPrefix(trackName, "audio"); ok {
+			if idx, err := strconv.Atoi(suffix); err == nil && idx >= 0 {
+				m.handleMediaSubscribe(ctx, sub, alias, trackName, "audio", idx)
 				return
 			}
 		}

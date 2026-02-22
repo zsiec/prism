@@ -1,4 +1,5 @@
 import { AudioRingBuffer } from "./audio-ring-buffer";
+import audioWorkletUrl from "./audio-worklet.ts?worker&url";
 
 const MIN_BUFFER_MS = 300;
 const RING_BUFFER_SECONDS = 4;
@@ -128,8 +129,7 @@ export class PrismAudioDecoder {
 		this.ringBuffer.init(channels, ringSize, sampleRate);
 
 		try {
-			const workletUrl = new URL("./audio-worklet.ts", import.meta.url);
-			await this.context.audioWorklet.addModule(workletUrl.href);
+			await this.context.audioWorklet.addModule(audioWorkletUrl);
 		} catch (e) {
 			console.error("[AudioDecoder] Failed to load AudioWorklet module", e);
 		}

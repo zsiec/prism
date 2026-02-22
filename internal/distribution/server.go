@@ -216,10 +216,8 @@ func (s *Server) GetRelay(streamKey string) *Relay {
 	return nil
 }
 
-// APIHandler returns an http.Handler for the HTTPS REST API, including
-// stream listing, debug endpoints, cert hash, and SRT pull management.
-func (s *Server) APIHandler() http.Handler {
-	mux := http.NewServeMux()
+// registerAPIRoutes registers the REST API endpoints on the given mux.
+func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/streams", s.handleListStreams)
 	mux.HandleFunc("GET /api/streams/{key}/debug", s.handleStreamDebug)
 	mux.HandleFunc("GET /api/cert-hash", s.handleCertHash)
@@ -227,6 +225,13 @@ func (s *Server) APIHandler() http.Handler {
 	mux.HandleFunc("POST /api/srt-pull", s.handleSRTPullCreate)
 	mux.HandleFunc("DELETE /api/srt-pull", s.handleSRTPullStop)
 	mux.HandleFunc("OPTIONS /api/srt-pull", s.handleSRTPullOptions)
+}
+
+// APIHandler returns an http.Handler for the HTTPS REST API, including
+// stream listing, debug endpoints, cert hash, and SRT pull management.
+func (s *Server) APIHandler() http.Handler {
+	mux := http.NewServeMux()
+	s.registerAPIRoutes(mux)
 
 	if s.config.WebDir != "" {
 		mux.Handle("/", http.FileServer(http.Dir(s.config.WebDir)))
@@ -250,32 +255,24 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func writeJSON(w http.ResponseWriter, v any) {
+func writeJSON(w http.ResponseWriter, code int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		slog.Error("encoding JSON response", "error", err)
 	}
 }
 
 func writeError(w http.ResponseWriter, code int, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	writeJSON(w, map[string]string{"error": msg})
+	writeJSON(w, code, map[string]string{"error": msg})
 }
 
 // Start launches the HTTP/3 WebTransport server and blocks until the context
 // is cancelled or a fatal error occurs.
 func (s *Server) Start(ctx context.Context) error {
 	wtMux := http.NewServeMux()
-
 	wtMux.HandleFunc("/moq", s.handleMoQ)
-
-	wtMux.HandleFunc("GET /api/streams", s.handleListStreams)
-	wtMux.HandleFunc("GET /api/streams/{key}/debug", s.handleStreamDebug)
-	wtMux.HandleFunc("GET /api/cert-hash", s.handleCertHash)
-	wtMux.HandleFunc("GET /api/srt-pull", s.handleSRTPullList)
-	wtMux.HandleFunc("POST /api/srt-pull", s.handleSRTPullCreate)
-	wtMux.HandleFunc("DELETE /api/srt-pull", s.handleSRTPullStop)
-	wtMux.HandleFunc("OPTIONS /api/srt-pull", s.handleSRTPullOptions)
+	s.registerAPIRoutes(wtMux)
 
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{s.config.Cert.TLSCert},
@@ -381,14 +378,14 @@ func (s *Server) setupMoQ(r *http.Request, session *webtransport.Session, contro
 		return "", nil, nil, moq.ErrUnknownTrack
 	}
 
-	moqSession := NewMoQSession(
-		fmt.Sprintf("moq-%s-%s", streamKey, r.RemoteAddr),
-		session,
-		controlStream,
-		streamKey,
-		relay,
-		s.GetPipeline,
-	)
+	moqSession := NewMoQSession(MoQSessionConfig{
+		ID:            fmt.Sprintf("moq-%s-%s", streamKey, r.RemoteAddr),
+		Session:       session,
+		Control:       controlStream,
+		StreamKey:     streamKey,
+		Relay:         relay,
+		StatsProvider: s.GetPipeline,
+	})
 
 	pathKey, err := moqSession.handleSetup()
 	if err != nil {
@@ -420,8 +417,6 @@ func (s *Server) setupMoQ(r *http.Request, session *webtransport.Session, contro
 }
 
 func (s *Server) handleListStreams(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
 	var resp []StreamInfo
 
 	if s.config.StreamLister != nil {
@@ -432,12 +427,10 @@ func (s *Server) handleListStreams(w http.ResponseWriter, _ *http.Request) {
 		resp = make([]StreamInfo, 0)
 	}
 
-	writeJSON(w, resp)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleStreamDebug(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
 	streamKey := r.PathValue("key")
 
 	s.mu.RLock()
@@ -462,13 +455,11 @@ func (s *Server) handleStreamDebug(w http.ResponseWriter, r *http.Request) {
 		snap.Ingest = s.config.IngestLookup(streamKey)
 	}
 
-	writeJSON(w, snap)
+	writeJSON(w, http.StatusOK, snap)
 }
 
 func (s *Server) handleCertHash(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	writeJSON(w, certHashResponse{
+	writeJSON(w, http.StatusOK, certHashResponse{
 		Hash: s.config.Cert.FingerprintBase64(),
 		Addr: s.config.Addr,
 	})
@@ -484,16 +475,14 @@ func (s *Server) handleSRTPullOptions(w http.ResponseWriter, _ *http.Request) {
 // used for SSRF if exposed to untrusted clients. In production, this endpoint
 // should be restricted to authenticated operators or internal networks.
 func (s *Server) handleSRTPullList(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
 	if s.config.SRTList == nil {
-		writeJSON(w, []SRTPullInfo{})
+		writeJSON(w, http.StatusOK, []SRTPullInfo{})
 		return
 	}
-	writeJSON(w, s.config.SRTList())
+	writeJSON(w, http.StatusOK, s.config.SRTList())
 }
 
 func (s *Server) handleSRTPullCreate(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
 	if s.config.SRTPull == nil {
 		writeError(w, http.StatusNotImplemented, "SRT pull not configured")
 		return
@@ -515,12 +504,10 @@ func (s *Server) handleSRTPullCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	writeJSON(w, map[string]string{"status": "pulling", "streamKey": req.StreamKey})
+	writeJSON(w, http.StatusCreated, map[string]string{"status": "pulling", "streamKey": req.StreamKey})
 }
 
 func (s *Server) handleSRTPullStop(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
 	if s.config.SRTStop == nil {
 		writeError(w, http.StatusNotImplemented, "SRT pull not configured")
 		return
@@ -534,5 +521,5 @@ func (s *Server) handleSRTPullStop(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
-	writeJSON(w, map[string]string{"status": "stopped", "streamKey": streamKey})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "stopped", "streamKey": streamKey})
 }
