@@ -60,7 +60,7 @@ func main() {
 	}
 
 	wtAddr := envOr("WT_ADDR", ":4443")
-	webDir := envOr("WEB_DIR", "web")
+	webDir := envOr("WEB_DIR", "web/dist")
 	srtAddr := envOr("SRT_ADDR", ":6000")
 	apiAddr := envOr("API_ADDR", ":4444")
 

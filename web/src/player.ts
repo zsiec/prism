@@ -138,6 +138,15 @@ export class PrismPlayer {
 		container.appendChild(this.statsEl);
 		container.appendChild(this.captionsEl);
 
+		// Resume suspended AudioContext on first user gesture (browser autoplay policy).
+		const resumeAudio = () => {
+			if (this.sharedAudioContext && this.sharedAudioContext.state === "suspended") {
+				this.sharedAudioContext.resume();
+			}
+		};
+		document.addEventListener("click", resumeAudio, { once: true });
+		document.addEventListener("keydown", resumeAudio, { once: true });
+
 		this.playerUI = new PlayerUI({
 			container: this.container,
 			videoCanvas: this.canvas,

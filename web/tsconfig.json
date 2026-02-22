@@ -10,7 +10,7 @@
     "isolatedModules": true,
     "skipLibCheck": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable", "WebWorker"],
-    "types": ["@webgpu/types"]
+    "types": ["@webgpu/types", "vite/client"]
   },
   "include": ["src"]
 }

@@ -19,45 +19,33 @@ Prism accepts MPEG-TS streams over SRT, demuxes H.264/H.265 video and AAC audio,
 
 ## Quick Start
 
-**Prerequisites:** Go 1.24+, Node.js 22+ (for the web viewer)
+**Prerequisites:** Go 1.24+, Node.js 22+
 
 ```bash
-# Build the server
-make build
-
-# Install web dependencies and build
-cd web && npm install && npm run build && cd ..
-
-# Run the server
-./bin/prism
+make demo
 ```
 
-The server listens on:
-- `:6000` — SRT ingest
-- `:4443` — WebTransport (MoQ + Prism v1)
-- `:4444` — HTTPS REST API
+This builds the server, builds the web viewer, and pushes a bundled test stream. Open `https://localhost:4444/?stream=demo` in your browser and accept the self-signed certificate.
 
-### Push a test stream
+### Full broadcast demo
+
+For the complete 9-stream experience with captions, SCTE-35 cues, timecode, and multi-track audio:
+
+**Additional prerequisites:** [ffmpeg](https://ffmpeg.org/) (includes ffprobe)
 
 ```bash
-# Generate 9 broadcast-realistic test streams
-make gen-streams
-
-# Push all test streams to the server
-go run ./test/tools/srt-push/ --all
+make demo-full
 ```
 
-Or push your own stream with FFmpeg:
+This downloads Blender open-movie sources (~2 GB on first run), encodes 9 broadcast-realistic streams, and pushes them all simultaneously. Open `https://localhost:4444/` to see the multiview grid.
+
+### Push your own stream
 
 ```bash
-ffmpeg -re -i input.ts -c copy -f mpegts srt://localhost:6000?streamid=mystream
+ffmpeg -re -i input.ts -c copy -f mpegts srt://localhost:6000?streamid=live/mystream
 ```
 
-### Watch in the browser
-
-Open `https://localhost:4444/?stream=mystream` and accept the self-signed certificate.
-
-The server generates a self-signed ECDSA certificate at startup and provides the cert hash via `/api/cert-hash` for WebTransport certificate pinning.
+Then open `https://localhost:4444/?stream=live/mystream`.
 
 ## Architecture
 
@@ -81,6 +69,7 @@ Single Go binary, vanilla TypeScript frontend:
 | `internal/demux/` | MPEG-TS demuxer, H.264/H.265/AAC parsers |
 | `internal/media/` | Frame types (`VideoFrame`, `AudioFrame`) |
 | `internal/distribution/` | WebTransport server, MoQ sessions, relay fan-out |
+| `internal/moq/` | MoQ Transport wire protocol codec |
 | `internal/pipeline/` | Demux-to-distribution orchestration |
 | `internal/stream/` | Stream lifecycle management |
 | `internal/mpegts/` | Low-level MPEG-TS packet/PES/PSI parsing |
@@ -98,8 +87,13 @@ Environment variables with defaults:
 | `SRT_ADDR` | `:6000` | SRT ingest listen address |
 | `WT_ADDR` | `:4443` | WebTransport listen address |
 | `API_ADDR` | `:4444` | HTTPS REST API listen address |
-| `WEB_DIR` | `web` | Static file directory for the viewer |
+| `WEB_DIR` | `web/dist` | Static file directory for the viewer |
 | `DEBUG` | *(unset)* | Set to any value to enable debug logging |
+
+The server listens on:
+- `:6000` — SRT ingest
+- `:4443` — WebTransport (MoQ)
+- `:4444` — HTTPS REST API + web viewer
 
 ## REST API
 
@@ -124,11 +118,24 @@ make test
 # Format code
 make fmt
 
-# Run web dev server with hot reload
+# Build and run the server
+make run
+
+# Run web dev server with hot reload (port 5173, proxies API to :4444)
 make dev
 
-# Full demo: build + generate test streams + push all streams
+# Quick demo with bundled test stream
 make demo
+
+# Full 9-stream broadcast demo (requires ffmpeg)
+make demo-full
+```
+
+`make check` requires [staticcheck](https://staticcheck.dev/) and [govulncheck](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck):
+
+```bash
+go install honnef.co/go/tools/cmd/staticcheck@latest
+go install golang.org/x/vuln/cmd/govulncheck@latest
 ```
 
 ## Security Considerations

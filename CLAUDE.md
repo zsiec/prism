@@ -23,11 +23,14 @@ make dev
 # Run tests
 make test
 
-# Generate 9 broadcast-realistic test streams
+# Generate 9 broadcast-realistic test streams (requires ffmpeg)
 make gen-streams
 
-# Full demo: build + generate + push all streams
+# Quick demo: build + push bundled test stream (no ffmpeg needed)
 make demo
+
+# Full demo: build + generate + push all 9 streams (requires ffmpeg)
+make demo-full
 ```
 
 ## Architecture
