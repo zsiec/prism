@@ -1,0 +1,59 @@
+---
+description: 
+alwaysApply: true
+---
+
+# Prism — Project Guide
+
+## Build & Test
+
+```bash
+# Run all checks (MUST pass before committing)
+make check
+
+# Build server
+make build
+
+# Run server
+make run
+
+# Run web dev server
+make dev
+
+# Run tests
+make test
+
+# Generate 9 broadcast-realistic test streams
+make gen-streams
+
+# Full demo: build + generate + push all streams
+make demo
+```
+
+## Architecture
+
+Single Go module with web frontend:
+
+- `cmd/prism/` — Entry point, wires everything together
+- `internal/ingest/` — Stream ingest (SRT)
+- `internal/demux/` — MPEG-TS demuxer, H.264/AAC parsers
+- `internal/media/` — Frame types and pipeline orchestration
+- `internal/distribution/` — WebTransport server, fan-out relay, MoQ session management
+- `internal/moq/` — MoQ Transport wire protocol codec (control messages, format conversion)
+- `internal/stream/` — Stream lifecycle management
+- `internal/certs/` — Self-signed cert generation for WebTransport
+- `internal/pipeline/` — Demux-to-distribution pipeline orchestration
+- `web/` — Vanilla TypeScript viewer (Vite, WebTransport, WebCodecs)
+- `test/tools/gen-streams/` — Test stream generator (video, audio, captions, SCTE-35, timecode)
+- `test/tools/inject-captions/` — CEA-608 caption injector
+- `test/tools/inject-timecode/` — SMPTE 12M timecode injector
+- `test/tools/inject-scte35/` — SCTE-35 cue injector
+- `test/tools/srt-push/` — SRT test stream pusher (`--all` for multi-stream)
+
+## Key Conventions
+
+- Go: `gofmt -s` enforced
+- Go: `go vet` must pass
+- Go: tests must pass with `-race`
+- TypeScript: strict mode
+- No AI attribution in commits

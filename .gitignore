@@ -1,0 +1,39 @@
+# Build output
+bin/
+/prism
+inject-scte35
+inject-timecode
+srt-push
+
+# Web
+web/node_modules/
+web/dist/
+
+# TLS
+*.pem
+*.crt
+*.key
+
+# Test content (generated/downloaded)
+test/sources/
+test/streams/
+test/harness/*
+!test/harness/BigBuckBunny_256x144-24fps.ts
+!test/harness/test.srt
+
+# OS
+.DS_Store
+
+# IDE / editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# Environment
+.env
+.env.*
+
+# Go test/profiling output
+coverage.out
+*.prof
