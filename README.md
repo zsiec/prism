@@ -42,10 +42,10 @@ This downloads Blender open-movie sources (~2 GB on first run), encodes 9 broadc
 ### Push your own stream
 
 ```bash
-ffmpeg -re -i input.ts -c copy -f mpegts srt://localhost:6000?streamid=live/mystream
+ffmpeg -re -i input.ts -c copy -f mpegts srt://localhost:6000?streamid=mystream
 ```
 
-Then open `https://localhost:4444/?stream=live/mystream`.
+Then open `https://localhost:4444/?stream=mystream`.
 
 ## Architecture
 
