@@ -9,6 +9,7 @@
     "noFallthroughCasesInSwitch": true,
     "isolatedModules": true,
     "skipLibCheck": true,
+    "noEmit": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable", "WebWorker"],
     "types": ["@webgpu/types", "vite/client"]
   },
