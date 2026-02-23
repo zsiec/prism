@@ -18,8 +18,9 @@ import (
 )
 
 type streamManifestEntry struct {
-	Number int    `json:"number"`
-	Key    string `json:"key"`
+	Number      int     `json:"number"`
+	Key         string  `json:"key"`
+	DurationSec float64 `json:"durationSec"`
 }
 
 type manifest struct {
@@ -100,13 +101,15 @@ func pushAll(addr string, durationOverride float64) {
 			continue
 		}
 
+		dur := selectDuration(durationOverride, s.DurationSec, 0)
+
 		wg.Add(1)
-		go func(file, key string, num int) {
+		go func(file, key string, num int, d float64) {
 			defer wg.Done()
 			streamID := "live/" + key
 			fmt.Printf("  Stream %d: %s -> %s\n", num, key, streamID)
-			pushSingle(file, streamID, addr, durationOverride)
-		}(tsFile, s.Key, s.Number)
+			pushSingle(file, streamID, addr, d)
+		}(tsFile, s.Key, s.Number, dur)
 
 		time.Sleep(200 * time.Millisecond)
 	}
@@ -126,15 +129,8 @@ func pushSingle(filePath, streamID, addr string, durationOverride float64) {
 		fmt.Fprintf(os.Stderr, "Warning: file size not a multiple of %d\n", tsutil.TSPacketSize)
 	}
 
-	var duration float64
-	if durationOverride > 0 {
-		duration = durationOverride
-	} else {
-		duration = findDuration(filePath)
-		if duration <= 0 {
-			duration = 60.0
-		}
-	}
+	ffprobeDur := findDuration(filePath)
+	duration := selectDuration(durationOverride, 0, ffprobeDur)
 	bytesPerSec := float64(len(data)) / duration
 	chunkSize := tsutil.TSPacketSize * 7
 
@@ -231,9 +227,26 @@ func findStreamsDir() string {
 	}
 }
 
+// selectDuration picks the best duration source in priority order:
+// explicit override > manifest value > ffprobe detection > 60s default.
+func selectDuration(override, manifestDur, ffprobeDur float64) float64 {
+	if override > 0 {
+		return override
+	}
+	if manifestDur > 0 {
+		return manifestDur
+	}
+	if ffprobeDur > 0 {
+		return ffprobeDur
+	}
+	return 60.0
+}
+
 func findDuration(filePath string) float64 {
-	// Use ffprobe for accurate duration; the PCR-based scan can report
-	// double the actual duration when mpegts_flags=resend_headers is used.
+	// Use ffprobe as a fallback for duration detection. Note: ffprobe
+	// significantly overestimates duration for multi-track MPEG-TS files
+	// (3-10% error observed), so the manifest's durationSec field is
+	// preferred in --all mode (see pushAll).
 	out, err := exec.Command("ffprobe",
 		"-v", "error",
 		"-show_entries", "format=duration",
