@@ -22,8 +22,9 @@ const MAX_CHANNELS = 8;
 const RMS_BASE = SharedStates.PEAK_BASE + MAX_CHANNELS;
 
 // Adaptive rate control: when buffer is between LOW and HIGH, consume at 1x.
-// Below LOW, slow down consumption; above HIGH, speed up.
-// This prevents underruns by stretching audio imperceptibly (~1-2%).
+// Below LOW, slow down consumption; above HIGH, speed up. Drift is
+// compensated by skipping or repeating 2-3 samples per 128-sample quantum
+// (~62µs, inaudible) — no resampling or interpolation is used.
 const TARGET_BUFFER_MS = 1000;
 const LOW_WATER_MS = 600;
 const HIGH_WATER_MS = 1500;
@@ -48,7 +49,6 @@ class PrismAudioWorkletProcessor extends AudioWorkletProcessor {
 	private localSampleRate = 0;
 
 	private fractionalAccum = 0;
-	private resampleScratch: Float32Array | null = null;
 
 	constructor() {
 		super();
@@ -111,51 +111,31 @@ class PrismAudioWorkletProcessor extends AudioWorkletProcessor {
 
 		const channelsToFill = Math.min(output.length, this.numChannels);
 
-		if (speedRatio >= 0.999 && speedRatio <= 1.001) {
-			// 1x path: no resampling needed, just copy directly
-			const toRead = Math.min(framesToFill, available);
-			this.readFromRing(start, toRead, output, channelsToFill);
+		// Drift compensation via pointer-rate adjustment:
+		// Always copy clean source samples to output (no interpolation/resampling).
+		// Compensate by advancing the ring read pointer at a slightly different
+		// rate than the output frame size. At ±2%, this means 2-3 samples of
+		// overlap (slow) or skip (fast) per 128-sample quantum — ~62µs, inaudible.
+		const exactAdvance = framesToFill * speedRatio + this.fractionalAccum;
+		const toAdvance = Math.min(Math.floor(exactAdvance), available);
+		this.fractionalAccum = exactAdvance - Math.floor(exactAdvance);
 
-			if (toRead < framesToFill) {
-				for (let c = 0; c < channelsToFill; c++) {
-					output[c].fill(0, toRead);
-				}
-			}
+		const toRead = Math.min(framesToFill, available);
+		this.readFromRing(start, toRead, output, channelsToFill);
 
-			for (let c = channelsToFill; c < output.length; c++) {
-				output[c].fill(0);
-			}
-
-			const newStart = (start + toRead) % this.ringSize;
-			Atomics.store(this.sharedStates, SharedStates.BUFF_START, newStart);
-			this.samplesConsumed += toRead;
-		} else {
-			// Adaptive path: consume more or fewer source samples than output frames.
-			// speedRatio > 1 means consume MORE source samples (play faster, drain buffer).
-			// speedRatio < 1 means consume FEWER source samples (play slower, preserve buffer).
-			const exactSourceSamples = framesToFill * speedRatio + this.fractionalAccum;
-			const sourceSamples = Math.floor(exactSourceSamples);
-			this.fractionalAccum = exactSourceSamples - sourceSamples;
-
-			const toRead = Math.min(sourceSamples, available);
-
-			if (!this.resampleScratch || this.resampleScratch.length < toRead) {
-				this.resampleScratch = new Float32Array(Math.max(toRead, 256));
-			}
-
+		if (toRead < framesToFill) {
 			for (let c = 0; c < channelsToFill; c++) {
-				this.readChannelFromRing(start, toRead, c, this.resampleScratch);
-				this.linearResample(this.resampleScratch, toRead, output[c], framesToFill);
+				output[c].fill(0, toRead);
 			}
-
-			for (let c = channelsToFill; c < output.length; c++) {
-				output[c].fill(0);
-			}
-
-			const newStart = (start + toRead) % this.ringSize;
-			Atomics.store(this.sharedStates, SharedStates.BUFF_START, newStart);
-			this.samplesConsumed += toRead;
 		}
+
+		for (let c = channelsToFill; c < output.length; c++) {
+			output[c].fill(0);
+		}
+
+		const newStart = (start + toAdvance) % this.ringSize;
+		Atomics.store(this.sharedStates, SharedStates.BUFF_START, newStart);
+		this.samplesConsumed += toAdvance;
 
 		const currentPTS = this.basePTS +
 			((this.sampleOffset + this.samplesConsumed) / this.localSampleRate) * 1_000_000;
@@ -189,37 +169,6 @@ class PrismAudioWorkletProcessor extends AudioWorkletProcessor {
 			dst.set(src.subarray(start, start + firstPart), 0);
 			if (count > firstPart) {
 				dst.set(src.subarray(0, count - firstPart), firstPart);
-			}
-		}
-	}
-
-	private readChannelFromRing(start: number, count: number, channel: number, dst: Float32Array): void {
-		const src = this.floatViews[channel];
-		const firstPart = Math.min(count, this.ringSize - start);
-		dst.set(src.subarray(start, start + firstPart), 0);
-		if (count > firstPart) {
-			dst.set(src.subarray(0, count - firstPart), firstPart);
-		}
-	}
-
-	private linearResample(src: Float32Array, srcLen: number, dst: Float32Array, dstLen: number): void {
-		if (srcLen === 0) {
-			dst.fill(0);
-			return;
-		}
-		if (srcLen === 1) {
-			dst.fill(src[0]);
-			return;
-		}
-		const ratio = (srcLen - 1) / (dstLen - 1);
-		for (let i = 0; i < dstLen; i++) {
-			const srcPos = i * ratio;
-			const idx = Math.floor(srcPos);
-			const frac = srcPos - idx;
-			if (idx + 1 < srcLen) {
-				dst[i] = src[idx] * (1 - frac) + src[idx + 1] * frac;
-			} else {
-				dst[i] = src[idx];
 			}
 		}
 	}

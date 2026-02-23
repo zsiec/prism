@@ -1,7 +1,7 @@
 import { AudioRingBuffer } from "./audio-ring-buffer";
 import audioWorkletUrl from "./audio-worklet.ts?worker&url";
 
-const MIN_BUFFER_MS = 300;
+const MIN_BUFFER_MS = 500;
 const RING_BUFFER_SECONDS = 4;
 const PEAK_HOLD_SEC = 1.5;
 const PEAK_HOLD_DECAY = 0.9;
@@ -432,16 +432,14 @@ export class PrismAudioDecoder {
 
 		if (this._ptsEpochReset) {
 			this._ptsEpochReset = false;
-			const inputPTS = this._diagLastInputPTS;
-			if (inputPTS >= 0 && this.workletNode) {
-				this.ringBuffer.clear();
-				this.samplesWritten = 0;
-				this.workletNode.port.postMessage({
-					type: "set-pts",
-					pts: inputPTS,
-					sampleOffset: 0,
-				});
-			}
+			// PTS epoch reset (stream loop). Do NOT clear the ring buffer —
+			// the buffered PCM is still valid decoded audio. Clearing it
+			// would cause a silence gap while the buffer refills.
+			//
+			// The worklet continues playing from its existing buffer and
+			// PTS monotonically advances based on samples consumed. The
+			// renderer handles A/V resync independently when it detects
+			// the video PTS discontinuity.
 		}
 
 		const written = this.ringBuffer.write(audioData);
@@ -453,7 +451,7 @@ export class PrismAudioDecoder {
 		}
 
 		if (!this.playing && !this.starting) {
-			const bufferedMs = (this.samplesWritten / this.sampleRate) * 1000;
+			const bufferedMs = this.ringBuffer.getStats().queueLengthMs;
 			if (bufferedMs >= MIN_BUFFER_MS) {
 				this.startPlayback();
 			}

@@ -25,11 +25,11 @@ const (
 const viewerCaptionBuffer = 10
 
 // Publisher priority values for MoQ track subscriptions. Lower values
-// indicate higher priority. Video has the highest priority so that it
-// is delivered first under congestion.
+// indicate higher priority. Video and audio share the highest priority
+// so neither starves under congestion. Captions and stats are deprioritized.
 const (
 	priorityVideo    = 128
-	priorityAudio    = 192
+	priorityAudio    = 128
 	priorityCaptions = 200
 	priorityStats    = 220
 )

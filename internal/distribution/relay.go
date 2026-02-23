@@ -38,10 +38,15 @@ type AudioInfo struct {
 	Channels   int
 }
 
+// audioCacheSize is the number of recent audio frames cached per track
+// for replay to late-joining subscribers (~1 second at ~23ms/frame for AAC).
+const audioCacheSize = 50
+
 // Relay is the fan-out hub for a single stream. It distributes video, audio,
 // and caption frames from the pipeline to all connected MoQ viewers. It also
 // caches the current GOP so that late-joining viewers can start playback
-// immediately from the most recent keyframe.
+// immediately from the most recent keyframe, and recent audio frames so that
+// new audio subscribers can pre-fill their buffers.
 type Relay struct {
 	log             *slog.Logger
 	mu              sync.RWMutex
@@ -55,6 +60,9 @@ type Relay struct {
 
 	gopMu    sync.RWMutex
 	gopCache []*media.VideoFrame
+
+	audioMu    sync.RWMutex
+	audioCache map[int][]*media.AudioFrame
 }
 
 // NewRelay creates a Relay with no viewers.
@@ -63,6 +71,7 @@ func NewRelay() *Relay {
 		log:            slog.With("component", "relay"),
 		sessions:       make(map[string]Viewer),
 		videoInfoReady: make(chan struct{}),
+		audioCache:     make(map[int][]*media.AudioFrame),
 	}
 }
 
@@ -234,14 +243,47 @@ func (r *Relay) ReplayFullGOPToChannel(ch chan<- *media.VideoFrame) int {
 	return replayed
 }
 
-// BroadcastAudio sends an audio frame to all connected viewers.
+// BroadcastAudio sends an audio frame to all connected viewers and updates
+// the per-track audio cache for late-joining subscriber replay.
 func (r *Relay) BroadcastAudio(frame *media.AudioFrame) {
+	r.audioMu.Lock()
+	cache := r.audioCache[frame.TrackIndex]
+	if len(cache) >= audioCacheSize {
+		copy(cache, cache[1:])
+		cache[len(cache)-1] = frame
+	} else {
+		cache = append(cache, frame)
+	}
+	r.audioCache[frame.TrackIndex] = cache
+	r.audioMu.Unlock()
+
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	for _, session := range r.sessions {
 		session.SendAudio(frame)
 	}
+}
+
+// ReplayAudioToChannel sends the cached recent audio frames for the given
+// track index into a channel, pre-filling the subscriber's buffer so
+// playback can start without waiting for new frames from the live edge.
+// Returns the number of frames replayed.
+func (r *Relay) ReplayAudioToChannel(trackIndex int, ch chan<- *media.AudioFrame) int {
+	r.audioMu.RLock()
+	defer r.audioMu.RUnlock()
+
+	cache := r.audioCache[trackIndex]
+	replayed := 0
+	for _, frame := range cache {
+		select {
+		case ch <- frame:
+			replayed++
+		default:
+			return replayed
+		}
+	}
+	return replayed
 }
 
 // BroadcastCaptions sends a caption frame to all connected viewers.
