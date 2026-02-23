@@ -1,9 +1,9 @@
 # Build output
 bin/
 /prism
-inject-scte35
-inject-timecode
-srt-push
+./inject-scte35
+./inject-timecode
+./srt-push
 
 # Web
 web/node_modules/
