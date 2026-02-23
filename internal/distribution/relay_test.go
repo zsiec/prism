@@ -333,3 +333,110 @@ func TestRelayAudioInfo(t *testing.T) {
 		t.Errorf("AudioInfo: got %d/%d, want 44100/1", ai.SampleRate, ai.Channels)
 	}
 }
+
+func TestRelayAudioCacheReplay(t *testing.T) {
+	t.Parallel()
+
+	r := NewRelay()
+
+	// Broadcast 5 audio frames for track 0
+	for i := 0; i < 5; i++ {
+		r.BroadcastAudio(&media.AudioFrame{
+			PTS:        int64(i * 23000),
+			Data:       []byte{0xFF, 0xF1, byte(i)},
+			TrackIndex: 0,
+		})
+	}
+
+	// Replay into a channel
+	ch := make(chan *media.AudioFrame, 10)
+	n := r.ReplayAudioToChannel(0, ch)
+	if n != 5 {
+		t.Errorf("ReplayAudioToChannel: got %d frames, want 5", n)
+	}
+	if len(ch) != 5 {
+		t.Errorf("channel length: got %d, want 5", len(ch))
+	}
+
+	// Verify ordering (PTS should be ascending)
+	for i := 0; i < 5; i++ {
+		frame := <-ch
+		expectedPTS := int64(i * 23000)
+		if frame.PTS != expectedPTS {
+			t.Errorf("frame %d PTS: got %d, want %d", i, frame.PTS, expectedPTS)
+		}
+	}
+}
+
+func TestRelayAudioCacheEviction(t *testing.T) {
+	t.Parallel()
+
+	r := NewRelay()
+
+	// Broadcast more than audioCacheSize frames
+	total := audioCacheSize + 20
+	for i := 0; i < total; i++ {
+		r.BroadcastAudio(&media.AudioFrame{
+			PTS:        int64(i * 23000),
+			Data:       []byte{0xFF, 0xF1, byte(i % 256)},
+			TrackIndex: 0,
+		})
+	}
+
+	// Replay should return exactly audioCacheSize frames
+	ch := make(chan *media.AudioFrame, audioCacheSize+10)
+	n := r.ReplayAudioToChannel(0, ch)
+	if n != audioCacheSize {
+		t.Errorf("ReplayAudioToChannel: got %d frames, want %d", n, audioCacheSize)
+	}
+
+	// First replayed frame should be the (total - audioCacheSize)th frame
+	first := <-ch
+	expectedFirstPTS := int64((total - audioCacheSize) * 23000)
+	if first.PTS != expectedFirstPTS {
+		t.Errorf("first replayed PTS: got %d, want %d", first.PTS, expectedFirstPTS)
+	}
+}
+
+func TestRelayAudioCacheMultiTrack(t *testing.T) {
+	t.Parallel()
+
+	r := NewRelay()
+
+	// Broadcast frames for track 0 and track 1
+	for i := 0; i < 3; i++ {
+		r.BroadcastAudio(&media.AudioFrame{
+			PTS:        int64(i * 23000),
+			Data:       []byte{0xFF, 0xF1, byte(i)},
+			TrackIndex: 0,
+		})
+	}
+	for i := 0; i < 5; i++ {
+		r.BroadcastAudio(&media.AudioFrame{
+			PTS:        int64(i * 23000),
+			Data:       []byte{0xFF, 0xF1, byte(i)},
+			TrackIndex: 1,
+		})
+	}
+
+	// Replay track 0
+	ch0 := make(chan *media.AudioFrame, 10)
+	n0 := r.ReplayAudioToChannel(0, ch0)
+	if n0 != 3 {
+		t.Errorf("track 0 replay: got %d frames, want 3", n0)
+	}
+
+	// Replay track 1
+	ch1 := make(chan *media.AudioFrame, 10)
+	n1 := r.ReplayAudioToChannel(1, ch1)
+	if n1 != 5 {
+		t.Errorf("track 1 replay: got %d frames, want 5", n1)
+	}
+
+	// Replay non-existent track 2
+	ch2 := make(chan *media.AudioFrame, 10)
+	n2 := r.ReplayAudioToChannel(2, ch2)
+	if n2 != 0 {
+		t.Errorf("track 2 replay: got %d frames, want 0", n2)
+	}
+}

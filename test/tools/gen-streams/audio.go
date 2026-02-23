@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"math/rand"
-	"os/exec"
 	"strings"
 
 	"github.com/zsiec/prism/test/tools/tsutil"
@@ -14,7 +13,7 @@ import (
 // is always the original film audio, copied through. Additional tracks are
 // created by pitch-shifting or time-offsetting the original audio to simulate
 // SAP/secondary language tracks.
-func mixAudioTracks(inputTS, output string, numTracks int, sourcesDir string, rng *rand.Rand) error {
+func mixAudioTracks(inputTS, output string, numTracks int, sourcesDir string, rng *rand.Rand, durationSec float64, prefix string) error {
 	if numTracks <= 1 {
 		return tsutil.CopyFile(inputTS, output)
 	}
@@ -42,12 +41,7 @@ func mixAudioTracks(inputTS, output string, numTracks int, sourcesDir string, rn
 	args = append(args, "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2")
 	args = append(args, "-f", "mpegts", "-mpegts_flags", "resend_headers", output)
 
-	cmd := exec.Command("ffmpeg", args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("ffmpeg audio mix: %w\n%s", err, string(out))
-	}
-	return nil
+	return runFFmpegWithProgress(args, durationSec, prefix)
 }
 
 // randomTrackCount returns a random stereo track count using a weighted

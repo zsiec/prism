@@ -316,6 +316,11 @@ func (m *MoQSession) handleMediaSubscribe(ctx context.Context, sub moq.Subscribe
 	case "audio":
 		trackSub.writer = NewMoQWriter(alias, priorityAudio)
 		trackSub.audioCh = make(chan *media.AudioFrame, media.AudioBufferSize)
+		// Replay recent audio frames into the channel before starting the write
+		// loop, pre-filling the client's audio buffer for immediate playback.
+		if n := m.relay.ReplayAudioToChannel(audioIdx, trackSub.audioCh); n > 0 {
+			m.log.Debug("replayed audio into channel", "track", trackName, "frames", n)
+		}
 		go m.writeAudioLoop(subCtx, trackSub)
 
 	case "captions":
