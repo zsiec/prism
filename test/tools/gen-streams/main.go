@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zsiec/prism/test/tools/tsutil"
@@ -34,58 +36,61 @@ type Manifest struct {
 	Streams   []StreamConfig `json:"streams"`
 }
 
+// Stream durations are sized so the 9 encoded .ts files total ~1 GB,
+// fitting within the GitHub LFS free-tier storage limit while keeping
+// each stream long enough for a realistic broadcast demo (2-5 min).
 var streams = []StreamConfig{
 	{
 		Number: 1, Key: "scifi_a",
-		SourceFilm: "tears_of_steel.mov", StartSec: 0, DurationSec: 240,
+		SourceFilm: "tears_of_steel.mov", StartSec: 0, DurationSec: 120,
 		Captions: []string{"EN", "ES"}, CaptionType: "cea-708",
 		SCTE35: true, SCTE35Type: "ad_breaks", Timecode: true,
 	},
 	{
 		Number: 2, Key: "scifi_b",
-		SourceFilm: "tears_of_steel.mov", StartSec: 240, DurationSec: 240,
+		SourceFilm: "tears_of_steel.mov", StartSec: 240, DurationSec: 120,
 		Captions: []string{"FR", "DE"}, CaptionType: "cea-708",
 		SCTE35: true, SCTE35Type: "program", Timecode: true,
 	},
 	{
 		Number: 3, Key: "scifi_c",
-		SourceFilm: "tears_of_steel.mov", StartSec: 480, DurationSec: 254,
+		SourceFilm: "tears_of_steel.mov", StartSec: 480, DurationSec: 120,
 		Captions: []string{"JA", "EN"}, CaptionType: "cea-708",
 		SCTE35: false, Timecode: true,
 	},
 	{
 		Number: 4, Key: "fantasy_a",
-		SourceFilm: "sintel.mkv", StartSec: 0, DurationSec: 300,
+		SourceFilm: "sintel.mkv", StartSec: 0, DurationSec: 150,
 		Captions: []string{"PT"}, CaptionType: "cea-608",
 		SCTE35: true, SCTE35Type: "mixed", Timecode: true,
 	},
 	{
 		Number: 5, Key: "fantasy_b",
-		SourceFilm: "sintel.mkv", StartSec: 300, DurationSec: 300,
+		SourceFilm: "sintel.mkv", StartSec: 300, DurationSec: 150,
 		Captions: []string{"KO", "ZH"}, CaptionType: "cea-708",
 		SCTE35: false, Timecode: true,
 	},
 	{
 		Number: 6, Key: "fantasy_c",
-		SourceFilm: "sintel.mkv", StartSec: 600, DurationSec: 288,
+		SourceFilm: "sintel.mkv", StartSec: 600, DurationSec: 140,
 		Captions: []string{"AR", "EN"}, CaptionType: "cea-708",
 		SCTE35: true, SCTE35Type: "chapters", Timecode: true,
 	},
 	{
 		Number: 7, Key: "nature_a",
-		SourceFilm: "bbb.mov", StartSec: 0, DurationSec: 300,
+		SourceFilm: "bbb.mov", StartSec: 0, DurationSec: 150,
 		Captions: []string{"IT"}, CaptionType: "cea-608",
 		SCTE35: false, Timecode: true,
 	},
 	{
 		Number: 8, Key: "nature_b",
-		SourceFilm: "bbb.mov", StartSec: 300, DurationSec: 296,
+		SourceFilm: "bbb.mov", StartSec: 300, DurationSec: 140,
 		Captions: []string{"RU", "EN"}, CaptionType: "cea-708",
 		SCTE35: true, SCTE35Type: "unscheduled", Timecode: true,
 	},
 	{
 		Number: 9, Key: "abstract",
-		SourceFilm: "elephants_dream.mov", StartSec: 0, DurationSec: 654,
+		SourceFilm: "elephants_dream.mov", StartSec: 0, DurationSec: 300,
 		Captions: []string{"HI", "EN"}, CaptionType: "cea-708",
 		SCTE35: true, SCTE35Type: "po_start_end", Timecode: true,
 	},
@@ -127,79 +132,106 @@ func main() {
 		streams[i].Description = fmt.Sprintf("%s — %s from %s [%s]", title, features, sc.SourceFilm, dur)
 	}
 
-	fmt.Println("Step 1: Downloading source films...")
+	fmt.Println("Downloading source films...")
 	if err := downloadSources(sourcesDir); err != nil {
 		fatal("source download failed: %v", err)
 	}
 
-	for i, sc := range streams {
-		fmt.Printf("\n--- Stream %d: %s (%s %.0f-%.0fs, %d audio tracks) ---\n",
-			sc.Number, sc.Key, sc.SourceFilm, sc.StartSec, sc.StartSec+sc.DurationSec, sc.AudioTracks)
+	// Encode streams in parallel. Each stream's pipeline (encode → audio
+	// mix → SCTE-35 → captions → timecode) is independent. Limit
+	// concurrency to NumCPU since ffmpeg is CPU-bound.
+	sem := make(chan struct{}, runtime.NumCPU())
+	var wg sync.WaitGroup
+	errs := make(chan string, len(streams))
+
+	for i := range streams {
+		sc := streams[i]
 		outFile := filepath.Join(streamsDir, fmt.Sprintf("stream_%d.ts", sc.Number))
 
 		if tsutil.FileExists(outFile) {
-			fmt.Printf("  Already exists, skipping\n")
+			fmt.Printf("[stream %d] Already exists, skipping\n", sc.Number)
 			continue
 		}
 
-		baseFile := filepath.Join(streamsDir, fmt.Sprintf("_base_%d.ts", sc.Number))
-		audioFile := filepath.Join(streamsDir, fmt.Sprintf("_audio_%d.ts", sc.Number))
-		captionFile := filepath.Join(streamsDir, fmt.Sprintf("_caption_%d.ts", sc.Number))
+		// Per-stream RNG derived from the global seed so audio pitch
+		// variations are deterministic regardless of goroutine order.
+		streamRng := rand.New(rand.NewSource(42 + int64(sc.Number)))
 
-		fmt.Printf("  Step 2: Encoding segment from %s...\n", sc.SourceFilm)
-		filmSource := filepath.Join(sourcesDir, sc.SourceFilm)
-		if err := encodeSegment(filmSource, baseFile, sc.StartSec, sc.DurationSec); err != nil {
-			fatal("encode failed for stream %d: %v", sc.Number, err)
-		}
+		wg.Add(1)
+		go func(idx int, sc StreamConfig, streamRng *rand.Rand) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 
-		fmt.Printf("  Step 3: Adding %d stereo audio tracks...\n", sc.AudioTracks)
-		if err := mixAudioTracks(baseFile, audioFile, sc.AudioTracks, sourcesDir, rng); err != nil {
-			fatal("audio mixing failed for stream %d: %v", sc.Number, err)
-		}
-		os.Remove(baseFile)
-		current := audioFile
+			prefix := fmt.Sprintf("[stream %d]", sc.Number)
+			fmt.Printf("\n--- %s %s (%s %.0f-%.0fs, %d audio tracks) ---\n",
+				prefix, sc.Key, sc.SourceFilm, sc.StartSec, sc.StartSec+sc.DurationSec, sc.AudioTracks)
 
-		scte35File := filepath.Join(streamsDir, fmt.Sprintf("_scte35_%d.ts", sc.Number))
-		if sc.SCTE35 {
-			fmt.Printf("  Step 4: Injecting SCTE-35 (%s)...\n", sc.SCTE35Type)
-			scte35Tool := filepath.Join(toolsDir, "inject-scte35", "main.go")
-			interval := scte35Interval(sc.SCTE35Type)
-			if err := runGoToolWithArgs(scte35Tool, current, scte35File, fmt.Sprintf("%.0f", interval)); err != nil {
-				fmt.Printf("    Warning: SCTE-35 injection failed: %v (continuing without)\n", err)
-				scte35File = current
+			baseFile := filepath.Join(streamsDir, fmt.Sprintf("_base_%d.ts", sc.Number))
+			audioFile := filepath.Join(streamsDir, fmt.Sprintf("_audio_%d.ts", sc.Number))
+			captionFile := filepath.Join(streamsDir, fmt.Sprintf("_caption_%d.ts", sc.Number))
+
+			fmt.Printf("%s Encoding segment from %s...\n", prefix, sc.SourceFilm)
+			filmSource := filepath.Join(sourcesDir, sc.SourceFilm)
+			if err := encodeSegment(filmSource, baseFile, sc.StartSec, sc.DurationSec, prefix+" encode"); err != nil {
+				errs <- fmt.Sprintf("encode failed for stream %d: %v", sc.Number, err)
+				return
+			}
+
+			fmt.Printf("%s Adding %d stereo audio tracks...\n", prefix, sc.AudioTracks)
+			if err := mixAudioTracks(baseFile, audioFile, sc.AudioTracks, sourcesDir, streamRng, sc.DurationSec, prefix+" audio"); err != nil {
+				errs <- fmt.Sprintf("audio mixing failed for stream %d: %v", sc.Number, err)
+				return
+			}
+			os.Remove(baseFile)
+			current := audioFile
+
+			scte35File := filepath.Join(streamsDir, fmt.Sprintf("_scte35_%d.ts", sc.Number))
+			if sc.SCTE35 {
+				fmt.Printf("%s Injecting SCTE-35 (%s)...\n", prefix, sc.SCTE35Type)
+				scte35Tool := filepath.Join(toolsDir, "inject-scte35", "main.go")
+				interval := scte35Interval(sc.SCTE35Type)
+				if err := runGoToolWithArgs(scte35Tool, current, scte35File, fmt.Sprintf("%.0f", interval)); err != nil {
+					fmt.Printf("%s Warning: SCTE-35 injection failed: %v (continuing without)\n", prefix, err)
+					scte35File = current
+				} else {
+					os.Remove(current)
+					current = scte35File
+				}
+			}
+
+			fmt.Printf("%s Injecting captions (%s)...\n", prefix, sc.CaptionType)
+			if err := injectCaptions(current, captionFile, sc); err != nil {
+				fmt.Printf("%s Warning: caption injection failed: %v (continuing without)\n", prefix, err)
+				captionFile = current
 			} else {
 				os.Remove(current)
-				current = scte35File
+				current = captionFile
 			}
-		} else {
-			fmt.Printf("  Step 4: No SCTE-35 for this stream\n")
-		}
 
-		fmt.Printf("  Step 5: Injecting captions (%s)...\n", sc.CaptionType)
-		if err := injectCaptions(current, captionFile, sc); err != nil {
-			fmt.Printf("    Warning: caption injection failed: %v (continuing without)\n", err)
-			captionFile = current
-		} else {
-			os.Remove(current)
-			current = captionFile
-		}
+			fmt.Printf("%s Injecting timecode...\n", prefix)
+			tcTool := filepath.Join(toolsDir, "inject-timecode", "main.go")
+			if err := runGoTool(tcTool, current, outFile); err != nil {
+				fmt.Printf("%s Warning: timecode injection failed: %v (continuing without)\n", prefix, err)
+				os.Rename(current, outFile)
+			} else {
+				os.Remove(current)
+			}
 
-		fmt.Printf("  Step 6: Injecting timecode...\n")
-		tcTool := filepath.Join(toolsDir, "inject-timecode", "main.go")
-		if err := runGoTool(tcTool, current, outFile); err != nil {
-			fmt.Printf("    Warning: timecode injection failed: %v (continuing without)\n", err)
-			os.Rename(current, outFile)
-		} else {
-			os.Remove(current)
-		}
+			cleanupTempFiles(streamsDir, sc.Number)
 
-		cleanupTempFiles(streamsDir, sc.Number)
-		streams[i] = sc
+			info, _ := os.Stat(outFile)
+			if info != nil {
+				fmt.Printf("%s Done: %.1f MB\n", prefix, float64(info.Size())/1024/1024)
+			}
+		}(i, sc, streamRng)
+	}
 
-		info, _ := os.Stat(outFile)
-		if info != nil {
-			fmt.Printf("  Output: %s (%.1f MB)\n", outFile, float64(info.Size())/1024/1024)
-		}
+	wg.Wait()
+	close(errs)
+
+	for e := range errs {
+		fatal("%s", e)
 	}
 
 	manifestFile := filepath.Join(streamsDir, "manifest.json")
