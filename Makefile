@@ -51,7 +51,7 @@ demo: build web-build kill-prism
 	trap "kill $$PRISM_PID 2>/dev/null; wait $$PRISM_PID 2>/dev/null" EXIT INT TERM; \
 	sleep 2; \
 	open "https://localhost:4444/?stream=demo" 2>/dev/null || xdg-open "https://localhost:4444/?stream=demo" 2>/dev/null || echo "Open https://localhost:4444/?stream=demo in your browser"; \
-	go run ./test/tools/srt-push/ --file test/harness/BigBuckBunny_256x144-24fps.ts --key live/demo --duration 28.8; \
+	go run ./test/tools/srt-push/ --file test/harness/BigBuckBunny_256x144-24fps.ts --key live/demo; \
 	wait $$PRISM_PID
 
 demo-full: build web-build kill-prism gen-streams
