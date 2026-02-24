@@ -118,7 +118,7 @@ func TestParseHEVCSPS(t *testing.T) {
 		0x40, 0x00, 0x00, 0x00, // profile_compatibility_flags (bit 1 set)
 		0xB0, 0x00, 0x00, 0x00, 0x00, 0x00, // constraint_indicator_flags
 		0x5D,                         // level_idc = 93 (Level 3.1)
-		0xA0, 0x0A, 0x08, 0x0F, 0x10, // sps_id=0, chroma=1, width=320, height=240, conf_win=0
+		0xA0, 0x0A, 0x08, 0x0F, 0x16, // sps_id=0, chroma=1, width=320, height=240, conf_win=0, bdl=0, bdc=0
 	}
 
 	info, err := ParseHEVCSPS(sps)
@@ -140,6 +140,15 @@ func TestParseHEVCSPS(t *testing.T) {
 	}
 	if info.LevelIDC != 93 {
 		t.Errorf("LevelIDC: got %d, want 93", info.LevelIDC)
+	}
+	if info.ChromaFormatIdc != 1 {
+		t.Errorf("ChromaFormatIdc: got %d, want 1", info.ChromaFormatIdc)
+	}
+	if info.BitDepthLumaMinus8 != 0 {
+		t.Errorf("BitDepthLumaMinus8: got %d, want 0", info.BitDepthLumaMinus8)
+	}
+	if info.BitDepthChromaMinus8 != 0 {
+		t.Errorf("BitDepthChromaMinus8: got %d, want 0", info.BitDepthChromaMinus8)
 	}
 }
 

@@ -57,6 +57,10 @@ type HEVCSPSInfo struct {
 
 	ProfileCompatibilityFlags uint32
 	ConstraintIndicatorFlags  uint64
+
+	ChromaFormatIdc      byte
+	BitDepthLumaMinus8   byte
+	BitDepthChromaMinus8 byte
 }
 
 // CodecString returns the RFC 6381 codec parameter string (e.g.
@@ -135,6 +139,7 @@ func ParseHEVCSPS(nalu []byte) (HEVCSPSInfo, error) {
 	if err != nil {
 		return HEVCSPSInfo{}, err
 	}
+	info.ChromaFormatIdc = byte(chromaFormatIdc)
 
 	if chromaFormatIdc == 3 {
 		// separate_colour_plane_flag
@@ -195,6 +200,20 @@ func ParseHEVCSPS(nalu []byte) (HEVCSPSInfo, error) {
 		info.Width -= int((left + right) * subWidthC)
 		info.Height -= int((top + bottom) * subHeightC)
 	}
+
+	// bit_depth_luma_minus8
+	bdl, err := br.readUE()
+	if err != nil {
+		return info, nil
+	}
+	info.BitDepthLumaMinus8 = byte(bdl)
+
+	// bit_depth_chroma_minus8
+	bdc, err := br.readUE()
+	if err != nil {
+		return info, nil
+	}
+	info.BitDepthChromaMinus8 = byte(bdc)
 
 	return info, nil
 }

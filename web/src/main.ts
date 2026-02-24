@@ -283,12 +283,44 @@ async function fetchStreams(): Promise<void> {
 }
 
 if (urlMode === "multi") {
-	switchMode("multi");
+	showClickToStart(() => switchMode("multi"), multiModeEl);
 } else {
 	initSingleMode();
 	if (urlStreamKey) {
-		singlePlayer!.connect(urlStreamKey);
+		showClickToPlay(urlStreamKey);
 	}
+}
+
+/** Show a click-to-play overlay so the first action has a user gesture (beats autoplay). */
+function showClickToStart(onStart: () => void, target: HTMLElement): void {
+	const overlay = document.createElement("div");
+	overlay.style.cssText =
+		"position:absolute;inset:0;display:flex;align-items:center;justify-content:center;" +
+		"background:rgba(0,0,0,0.6);cursor:pointer;z-index:10;border-radius:3px;";
+	const btn = document.createElement("div");
+	btn.style.cssText =
+		"width:72px;height:72px;border-radius:50%;background:rgba(255,255,255,0.15);" +
+		"display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);";
+	btn.innerHTML =
+		'<svg width="32" height="32" viewBox="0 0 24 24" fill="white"><polygon points="6,3 20,12 6,21"/></svg>';
+	overlay.appendChild(btn);
+	target.style.position = "relative";
+	target.style.display = "block";
+	target.style.minHeight = "200px";
+	target.appendChild(overlay);
+
+	overlay.addEventListener("click", () => {
+		overlay.remove();
+		onStart();
+	}, { once: true });
+}
+
+function showClickToPlay(streamKey: string): void {
+	showClickToStart(() => {
+		singlePlayer!.connect(streamKey);
+		connectBtn.disabled = true;
+		statusEl.textContent = `Connecting to "${streamKey}"...`;
+	}, playerContainer);
 }
 
 fetchStreams();

@@ -128,13 +128,13 @@ func BuildHEVCDecoderConfig(vps, sps, pps []byte) []byte {
 	buf = append(buf, 0xFC)
 
 	// chromaFormat (2 bits) with 6 reserved bits = 0xFC
-	buf = append(buf, 0xFC)
+	buf = append(buf, 0xFC|info.ChromaFormatIdc&0x03)
 
 	// bitDepthLumaMinus8 (3 bits) with 5 reserved bits = 0xF8
-	buf = append(buf, 0xF8)
+	buf = append(buf, 0xF8|info.BitDepthLumaMinus8&0x07)
 
 	// bitDepthChromaMinus8 (3 bits) with 5 reserved bits = 0xF8
-	buf = append(buf, 0xF8)
+	buf = append(buf, 0xF8|info.BitDepthChromaMinus8&0x07)
 
 	// avgFrameRate (16 bits)
 	buf = append(buf, 0x00, 0x00)
