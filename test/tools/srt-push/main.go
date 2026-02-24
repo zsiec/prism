@@ -229,6 +229,7 @@ func findStreamsDir() string {
 
 // selectDuration picks the best duration source in priority order:
 // explicit override > manifest value > ffprobe detection > 60s default.
+// The ffprobe value should already be video-stream-specific (see findDuration).
 func selectDuration(override, manifestDur, ffprobeDur float64) float64 {
 	if override > 0 {
 		return override
@@ -243,18 +244,54 @@ func selectDuration(override, manifestDur, ffprobeDur float64) float64 {
 }
 
 func findDuration(filePath string) float64 {
-	// Use ffprobe as a fallback for duration detection. Note: ffprobe
-	// significantly overestimates duration for multi-track MPEG-TS files
-	// (3-10% error observed), so the manifest's durationSec field is
-	// preferred in --all mode (see pushAll).
-	out, err := exec.Command("ffprobe",
-		"-v", "error",
-		"-show_entries", "format=duration",
-		"-of", "default=noprint_wrappers=1:nokey=1",
-		filePath,
-	).Output()
-	if err == nil {
-		s := strings.TrimSpace(string(out))
+	// Try video-stream-specific duration first. Container-level duration
+	// overestimates by 3-10% for multi-track MPEG-TS files because ffprobe
+	// reports the longest stream (often a secondary audio track that
+	// extends past the video).
+	if d := ffprobeDuration(filePath, true); d > 0 {
+		return d
+	}
+	// Fall back to container-level duration.
+	if d := ffprobeDuration(filePath, false); d > 0 {
+		return d
+	}
+	return 0
+}
+
+// ffprobeDuration runs ffprobe to extract the media duration. When videoOnly
+// is true it queries the first video stream's duration (accurate for
+// multi-track MPEG-TS); when false it queries the container format duration.
+func ffprobeDuration(filePath string, videoOnly bool) float64 {
+	var args []string
+	if videoOnly {
+		args = []string{
+			"-v", "error",
+			"-select_streams", "v:0",
+			"-show_entries", "stream=duration",
+			"-of", "default=noprint_wrappers=1:nokey=1",
+			filePath,
+		}
+	} else {
+		args = []string{
+			"-v", "error",
+			"-show_entries", "format=duration",
+			"-of", "default=noprint_wrappers=1:nokey=1",
+			filePath,
+		}
+	}
+
+	out, err := exec.Command("ffprobe", args...).Output()
+	if err != nil {
+		return 0
+	}
+
+	// The output may contain multiple lines (e.g. one per program for
+	// stream=duration). Parse the first valid positive number.
+	for _, line := range strings.Split(string(out), "\n") {
+		s := strings.TrimSpace(line)
+		if s == "" || s == "N/A" {
+			continue
+		}
 		if d, err := strconv.ParseFloat(s, 64); err == nil && d > 0 {
 			return d
 		}
