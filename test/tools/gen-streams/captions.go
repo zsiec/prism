@@ -243,7 +243,11 @@ func injectCaptions(inputTS, output string, sc StreamConfig) error {
 		srtFiles = append(srtFiles, srtPath)
 	}
 
-	return embedCaptionsGoTool(inputTS, output, srtFiles)
+	mode := sc.CaptionType
+	if mode == "" {
+		mode = "cea-608"
+	}
+	return embedCaptionsGoTool(inputTS, output, srtFiles, mode)
 }
 
 const scriptCycleSec = 60.0
@@ -288,11 +292,11 @@ func writeSRT(path, lang string, durationSec float64) error {
 	return os.WriteFile(path, []byte(sb.String()), 0644)
 }
 
-func embedCaptionsGoTool(inputTS, output string, srtFiles []string) error {
+func embedCaptionsGoTool(inputTS, output string, srtFiles []string, mode string) error {
 	rootDir := findProjectRoot()
 	toolDir := filepath.Join(rootDir, "test", "tools", "inject-captions")
 
-	args := []string{"run", toolDir, inputTS, output}
+	args := []string{"run", toolDir, "--mode=" + mode, inputTS, output}
 	args = append(args, srtFiles...)
 
 	cmd := exec.Command("go", args...)
