@@ -272,29 +272,29 @@ func TestDemuxer_GoldenVectors(t *testing.T) {
 	}
 
 	expectedVideo := []goldenVideo{
-		{421, 2790000, 2782492, true},
-		{711, 2820030, 2786246, true},
-		{398, 2805015, 2790000, true},
-		{142, 2793753, 0, false},
-		{142, 2797507, 0, false},
-		{298, 2801261, 0, false},
-		{351, 2808768, 2805015, true},
-		{322, 2812522, 2808768, true},
-		{456, 2816276, 2812522, true},
-		{875, 2827537, 2816276, true},
+		{1302, 133500, 126000, true},
+		{118, 148500, 129750, true},
+		{116, 141000, 133500, true},
+		{116, 137250, 0, false},
+		{3739, 144750, 141000, true},
+		{26077, 163500, 144750, true},
+		{26078, 156000, 148500, true},
+		{26078, 152250, 0, false},
+		{26077, 159750, 156000, true},
+		{26078, 178500, 159750, true},
 	}
 
 	expectedAudio := []goldenAudio{
-		{762, 2790000},
-		{814, 2797680},
-		{840, 2805360},
-		{783, 2813040},
-		{754, 2820720},
-		{733, 2828400},
-		{705, 2836080},
-		{657, 2843760},
-		{652, 2851440},
-		{670, 2859120},
+		{2847, 131580},
+		{2725, 148860},
+		{2763, 164220},
+		{2810, 179580},
+		{2790, 194940},
+		{2774, 210300},
+		{2800, 225660},
+		{2773, 241020},
+		{2766, 256380},
+		{2808, 271740},
 	}
 
 	var videoPID, audioPID uint16
@@ -325,11 +325,11 @@ func TestDemuxer_GoldenVectors(t *testing.T) {
 					audioPID = es.ElementaryPID
 				}
 			}
-			if videoPID != 481 {
-				t.Errorf("video PID = %d, want 481", videoPID)
+			if videoPID != 256 {
+				t.Errorf("video PID = %d, want 256", videoPID)
 			}
-			if audioPID != 494 {
-				t.Errorf("audio PID = %d, want 494", audioPID)
+			if audioPID != 257 {
+				t.Errorf("audio PID = %d, want 257", audioPID)
 			}
 			continue
 		}

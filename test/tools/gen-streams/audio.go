@@ -39,6 +39,9 @@ func mixAudioTracks(inputTS, output string, numTracks int, sourcesDir string, rn
 	}
 
 	args = append(args, "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2")
+	// Trim output to the exact video duration so pitch-shifted audio tracks
+	// (which can be up to 11% longer at 0.9x speed) don't extend the container.
+	args = append(args, "-t", fmt.Sprintf("%.2f", durationSec))
 	args = append(args, "-f", "mpegts", "-mpegts_flags", "resend_headers", output)
 
 	return runFFmpegWithProgress(args, durationSec, prefix)
