@@ -231,7 +231,7 @@ func TestBuildHEVCDecoderConfig(t *testing.T) {
 		0x40, 0x00, 0x00, 0x00, // profile_compatibility_flags (bit 1 set)
 		0xB0, 0x00, 0x00, 0x00, 0x00, 0x00, // constraint_indicator_flags
 		0x5D,                         // level_idc = 93 (Level 3.1)
-		0xA0, 0x0A, 0x08, 0x0F, 0x10, // sps_id=0, chroma=1, width=320, height=240
+		0xA0, 0x0A, 0x08, 0x0F, 0x16, // sps_id=0, chroma=1, width=320, height=240, bdl=0, bdc=0
 	}
 	pps := []byte{0x44, 0x01, 0xC0, 0xF7}
 
@@ -248,6 +248,12 @@ func TestBuildHEVCDecoderConfig(t *testing.T) {
 	// Verify level_idc at byte 12
 	if config[12] != 93 {
 		t.Errorf("general_level_idc: got %d, want 93", config[12])
+	}
+
+	// Verify chromaFormat at byte 16 (6 reserved bits | 2 chroma bits)
+	// chromaFormatIdc=1 (4:2:0): 0xFC | 0x01 = 0xFD
+	if config[16] != 0xFD {
+		t.Errorf("chromaFormat: got 0x%02x, want 0xFD", config[16])
 	}
 
 	// Verify numOfArrays at byte 22
