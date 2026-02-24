@@ -14,15 +14,31 @@ import (
 
 func main() {
 	if len(os.Args) < 4 {
-		fmt.Fprintf(os.Stderr, "Usage: inject-captions <input.ts> <output.ts> <captions.srt> [captions2.srt ...]\n")
-		fmt.Fprintf(os.Stderr, "Injects CEA-608 closed captions into H.264 video as A/53 SEI user data.\n")
-		fmt.Fprintf(os.Stderr, "Each SRT file maps to a CEA-608 field/channel (CC1, CC2, CC3, CC4).\n")
+		fmt.Fprintf(os.Stderr, "Usage: inject-captions [--mode=cea-608|cea-708] <input.ts> <output.ts> <captions.srt> [captions2.srt ...]\n")
+		fmt.Fprintf(os.Stderr, "Injects closed captions into H.264 video as A/53 SEI user data.\n")
+		fmt.Fprintf(os.Stderr, "  --mode=cea-608  CEA-608 only (default)\n")
+		fmt.Fprintf(os.Stderr, "  --mode=cea-708  DTVCC Service 1 with CEA-608 CC1 fallback\n")
 		os.Exit(1)
 	}
 
-	inputFile := os.Args[1]
-	outputFile := os.Args[2]
-	srtFiles := os.Args[3:]
+	mode := "cea-708"
+	args := os.Args[1:]
+	for i, a := range args {
+		if strings.HasPrefix(a, "--mode=") {
+			mode = strings.TrimPrefix(a, "--mode=")
+			args = append(args[:i], args[i+1:]...)
+			break
+		}
+	}
+
+	if len(args) < 3 {
+		fmt.Fprintf(os.Stderr, "error: need at least input, output, and one SRT file\n")
+		os.Exit(1)
+	}
+
+	inputFile := args[0]
+	outputFile := args[1]
+	srtFiles := args[2:]
 
 	if len(srtFiles) > 4 {
 		fmt.Fprintf(os.Stderr, "warning: only 4 CEA-608 channels supported, ignoring extra SRT files\n")
@@ -71,33 +87,71 @@ func main() {
 	fps := detectFPS(tsData, videoPID)
 	fmt.Fprintf(os.Stderr, "Detected FPS: %.2f\n", fps)
 
-	// Build one flat triplet sequence per channel, then interleave into per-frame SEIs.
-	// Each SRT maps to a channel: SRT 0→CC1 (field 0), SRT 1→CC3 (field 1),
-	// SRT 2→CC2 (field 0), SRT 3→CC4 (field 1).
 	numFrames := len(pesPackets)
-	channelTriplets := make([][]ccTriplet, len(tracks))
-	for chIdx, entries := range tracks {
-		field := byte(0)
-		if chIdx == 1 || chIdx == 3 {
-			field = 1
-		}
-		channelTriplets[chIdx] = buildCaptionTriplets(entries, fps, numFrames, field)
-		fmt.Fprintf(os.Stderr, "Channel %d: %d triplets for %d frames\n", chIdx, len(channelTriplets[chIdx]), numFrames)
-	}
+	fmt.Fprintf(os.Stderr, "Mode: %s\n", mode)
 
-	for frameIdx := range pesPackets {
-		var frameTriplets []ccTriplet
-		for _, ct := range channelTriplets {
-			if frameIdx < len(ct) {
-				frameTriplets = append(frameTriplets, ct[frameIdx])
+	if mode == "cea-708" {
+		// CEA-708 mode: DTVCC Service 1 styled captions + CEA-608 CC1 fallback.
+		// First SRT → primary styled 708, all SRTs → 608 fallback channels.
+		cc608Channels := make([][]ccTriplet, len(tracks))
+		for chIdx, entries := range tracks {
+			field := byte(0)
+			if chIdx == 1 || chIdx == 3 {
+				field = 1
 			}
-		}
-		if len(frameTriplets) == 0 {
-			frameTriplets = append(frameTriplets, ccTriplet{ccType: 0, data1: 0x80, data2: 0x80})
+			cc608Channels[chIdx] = buildCaptionTriplets(entries, fps, numFrames, field)
+			fmt.Fprintf(os.Stderr, "608 fallback channel %d: %d triplets\n", chIdx, len(cc608Channels[chIdx]))
 		}
 
-		seiNAL := buildCaptionSEI(frameTriplets)
-		pesPackets[frameIdx].ESData = insertSEINAL(pesPackets[frameIdx].ESData, seiNAL)
+		dtvccFrames := buildDTVCCFrames(tracks[0], fps, numFrames)
+		fmt.Fprintf(os.Stderr, "708 DTVCC: %d frames with service data\n", countNonEmpty(dtvccFrames))
+
+		for frameIdx := range pesPackets {
+			var frameTriplets []ccTriplet
+			for _, ct := range cc608Channels {
+				if frameIdx < len(ct) {
+					frameTriplets = append(frameTriplets, ct[frameIdx])
+				}
+			}
+			if len(frameTriplets) == 0 {
+				frameTriplets = append(frameTriplets, ccTriplet{ccType: 0, data1: 0x80, data2: 0x80})
+			}
+
+			if frameIdx < len(dtvccFrames) && len(dtvccFrames[frameIdx]) > 0 {
+				frameTriplets = append(frameTriplets, dtvccFrames[frameIdx]...)
+			}
+
+			seiNAL := buildCaptionSEI(frameTriplets)
+			pesPackets[frameIdx].ESData = insertSEINAL(pesPackets[frameIdx].ESData, seiNAL)
+		}
+	} else {
+		// CEA-608 only mode: each SRT maps to a channel.
+		// SRT 0→CC1 (field 0), SRT 1→CC3 (field 1),
+		// SRT 2→CC2 (field 0), SRT 3→CC4 (field 1).
+		channelTriplets := make([][]ccTriplet, len(tracks))
+		for chIdx, entries := range tracks {
+			field := byte(0)
+			if chIdx == 1 || chIdx == 3 {
+				field = 1
+			}
+			channelTriplets[chIdx] = buildCaptionTriplets(entries, fps, numFrames, field)
+			fmt.Fprintf(os.Stderr, "Channel %d: %d triplets for %d frames\n", chIdx, len(channelTriplets[chIdx]), numFrames)
+		}
+
+		for frameIdx := range pesPackets {
+			var frameTriplets []ccTriplet
+			for _, ct := range channelTriplets {
+				if frameIdx < len(ct) {
+					frameTriplets = append(frameTriplets, ct[frameIdx])
+				}
+			}
+			if len(frameTriplets) == 0 {
+				frameTriplets = append(frameTriplets, ccTriplet{ccType: 0, data1: 0x80, data2: 0x80})
+			}
+
+			seiNAL := buildCaptionSEI(frameTriplets)
+			pesPackets[frameIdx].ESData = insertSEINAL(pesPackets[frameIdx].ESData, seiNAL)
+		}
 	}
 
 	outData := tsutil.RebuildTS(tsData, pesPackets, videoPID)
@@ -188,12 +242,11 @@ func parseSRTTime(h, m, s, ms string) float64 {
 // cc_data triplets using roll-up mode. Exactly one triplet per frame,
 // following the same protocol as ccx's test vector generator:
 //   - Control codes are sent twice (consecutive frames) for dedup
-//   - Roll-up 2 mode (RU2 = 0x14 0x25)
-//   - Carriage return (CR = 0x14 0x2D) between lines
+//   - Roll-up 3 mode (RU3 = 0x14 0x26) for 3 visible rows
+//   - Carriage return (CR = 0x14 0x2D) between wrapped lines
 //   - One character pair per frame
 //   - Erase displayed memory (EDM = 0x14 0x2C) at end of caption
 func buildCaptionTriplets(entries []srtEntry, fps float64, numFrames int, field byte) []ccTriplet {
-	// First build the full command sequence as byte pairs
 	var commands []cc608Pair
 	for _, entry := range entries {
 		startFrame := int(entry.startSec * fps)
@@ -205,29 +258,34 @@ func buildCaptionTriplets(entries []srtEntry, fps float64, numFrames int, field 
 			endFrame = numFrames
 		}
 
-		text := normalizeForCEA608(entry.text)
+		lines := wordWrapForCEA608(entry.text, 3)
 
-		// Build the pair sequence for this entry:
-		// RU2 (x2), EDM (x2), PAC row14 (x2), text pairs
 		var entryPairs []cc608Pair
 		entryPairs = append(entryPairs,
-			cc608Control(0x14, 0x25), // RU2
-			cc608Control(0x14, 0x25), // RU2 dedup
+			cc608Control(0x14, 0x26), // RU3
+			cc608Control(0x14, 0x26), // RU3 dedup
 			cc608Control(0x14, 0x2C), // EDM - clear previous
 			cc608Control(0x14, 0x2C), // EDM dedup
 			cc608Control(0x14, 0x60), // PAC row 14 (bottom), white, col 0
 			cc608Control(0x14, 0x60), // PAC dedup
 		)
 
-		for i := 0; i < len(text); i += 2 {
-			if i+1 < len(text) {
-				entryPairs = append(entryPairs, cc608Text(text[i], text[i+1]))
-			} else {
-				entryPairs = append(entryPairs, cc608Text(text[i], 0x80))
+		for li, line := range lines {
+			for i := 0; i < len(line); i += 2 {
+				if i+1 < len(line) {
+					entryPairs = append(entryPairs, cc608Text(line[i], line[i+1]))
+				} else {
+					entryPairs = append(entryPairs, cc608Text(line[i], 0x80))
+				}
+			}
+			if li < len(lines)-1 {
+				entryPairs = append(entryPairs,
+					cc608Control(0x14, 0x2D), // CR
+					cc608Control(0x14, 0x2D), // CR dedup
+				)
 			}
 		}
 
-		// Schedule: start emitting at startFrame, one pair per frame
 		for i, p := range entryPairs {
 			f := startFrame + i
 			if f >= numFrames {
@@ -238,7 +296,6 @@ func buildCaptionTriplets(entries []srtEntry, fps float64, numFrames int, field 
 			commands = append(commands, cmd)
 		}
 
-		// Schedule EDM at end time
 		if endFrame < numFrames {
 			edm1 := cc608Control(0x14, 0x2C)
 			edm1.frame = endFrame
@@ -248,10 +305,9 @@ func buildCaptionTriplets(entries []srtEntry, fps float64, numFrames int, field 
 		}
 	}
 
-	// Build per-frame triplets
 	triplets := make([]ccTriplet, numFrames)
 	for i := range triplets {
-		triplets[i] = ccTriplet{ccType: field, data1: 0x80, data2: 0x80} // padding
+		triplets[i] = ccTriplet{ccType: field, data1: 0x80, data2: 0x80}
 	}
 	for _, cmd := range commands {
 		if cmd.frame >= 0 && cmd.frame < numFrames {
@@ -275,27 +331,72 @@ type cc608Pair struct {
 func cc608Control(cc1, cc2 byte) cc608Pair { return cc608Pair{cc1: cc1, cc2: cc2, ctrl: true} }
 func cc608Text(c1, c2 byte) cc608Pair      { return cc608Pair{cc1: c1, cc2: c2} }
 
-func normalizeForCEA608(text string) []byte {
-	lines := strings.Split(text, "\n")
-	if len(lines) > 4 {
-		lines = lines[:4]
-	}
-	for i, line := range lines {
-		if len(line) > 32 {
-			lines[i] = line[:32]
-		}
-	}
-	combined := strings.Join(lines, " ")
+// wordWrapForCEA608 word-wraps text into lines of at most 32 characters each,
+// returning at most maxLines lines. Newlines in input are collapsed to spaces.
+// Non-printable ASCII is replaced with '?'.
+func wordWrapForCEA608(text string, maxLines int) [][]byte {
+	text = strings.ReplaceAll(text, "\n", " ")
 
-	var out []byte
-	for _, ch := range combined {
+	var clean []byte
+	for _, ch := range text {
 		if ch >= 0x20 && ch <= 0x7E {
-			out = append(out, byte(ch))
+			clean = append(clean, byte(ch))
 		} else {
-			out = append(out, '?')
+			clean = append(clean, '?')
 		}
 	}
-	return out
+
+	words := strings.Fields(string(clean))
+	var lines [][]byte
+	var cur []byte
+
+	for _, word := range words {
+		if len(word) > 32 {
+			for len(word) > 0 {
+				if len(cur) > 0 {
+					lines = append(lines, cur)
+					cur = nil
+				}
+				take := 32
+				if take > len(word) {
+					take = len(word)
+				}
+				lines = append(lines, []byte(word[:take]))
+				word = word[take:]
+			}
+			continue
+		}
+		if len(cur) == 0 {
+			cur = []byte(word)
+		} else if len(cur)+1+len(word) <= 32 {
+			cur = append(cur, ' ')
+			cur = append(cur, word...)
+		} else {
+			lines = append(lines, cur)
+			cur = []byte(word)
+		}
+	}
+	if len(cur) > 0 {
+		lines = append(lines, cur)
+	}
+
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+	}
+	if len(lines) == 0 {
+		lines = append(lines, []byte{})
+	}
+	return lines
+}
+
+func countNonEmpty(frames [][]ccTriplet) int {
+	n := 0
+	for _, f := range frames {
+		if len(f) > 0 {
+			n++
+		}
+	}
+	return n
 }
 
 // --- A/53 SEI NAL builder ---
@@ -344,8 +445,13 @@ func buildA53Payload(triplets []ccTriplet) []byte {
 		t := triplets[i]
 		// marker_bits(5) = 11111, cc_valid=1, cc_type(2)
 		marker := byte(0xFC) | (t.ccType & 0x03) // 11111 1 cc_type
-		// Add odd parity to data bytes
-		payload = append(payload, marker, addParity(t.data1), addParity(t.data2))
+		if t.ccType <= 1 {
+			// CEA-608 (cc_type 0/1): add odd parity
+			payload = append(payload, marker, addParity(t.data1), addParity(t.data2))
+		} else {
+			// DTVCC (cc_type 2/3): raw bytes, no parity
+			payload = append(payload, marker, t.data1, t.data2)
+		}
 	}
 
 	payload = append(payload, 0xFF) // marker_bits (end)
