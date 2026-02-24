@@ -134,7 +134,16 @@ func pushSingle(filePath, streamID, addr string, durationOverride float64) {
 	bytesPerSec := float64(len(data)) / duration
 	chunkSize := tsutil.TSPacketSize * 7
 
-	fmt.Printf("File: %s (%d packets, %.1fs, %.0f bytes/sec)\n", filePath, totalPackets, duration, bytesPerSec)
+	// Pre-scan for PTS/DTS/PCR locations so we can patch timestamps at
+	// each loop boundary, keeping them monotonically increasing.
+	tsEntries, firstPTS, lastPTS := scanTimestamps(data)
+	var loopPTSDelta int64
+	if firstPTS >= 0 && lastPTS > firstPTS {
+		loopPTSDelta = lastPTS - firstPTS + 3750 // +1 frame at 24fps in 90kHz ticks
+	}
+
+	fmt.Printf("File: %s (%d packets, %.1fs, %.0f bytes/sec, %d timestamp locations, loop delta=%.3fs)\n",
+		filePath, totalPackets, duration, bytesPerSec, len(tsEntries), float64(loopPTSDelta)/90000)
 
 	for {
 		fmt.Printf("[%s] Connecting to SRT %s...\n", streamID, addr)
@@ -150,7 +159,7 @@ func pushSingle(filePath, streamID, addr string, durationOverride float64) {
 		}
 
 		fmt.Printf("[%s] Connected, streaming continuously\n", streamID)
-		writeErr := streamLoop(conn, data, bytesPerSec, chunkSize, streamID)
+		writeErr := streamLoop(conn, data, bytesPerSec, chunkSize, streamID, tsEntries, loopPTSDelta)
 		conn.Close()
 
 		if writeErr != nil {
@@ -160,7 +169,7 @@ func pushSingle(filePath, streamID, addr string, durationOverride float64) {
 	}
 }
 
-func streamLoop(conn *srt.Conn, data []byte, bytesPerSec float64, chunkSize int, streamID string) error {
+func streamLoop(conn *srt.Conn, data []byte, bytesPerSec float64, chunkSize int, streamID string, tsEntries []ptsEntry, loopPTSDelta int64) error {
 	globalStart := time.Now()
 	var totalBytesSent int64
 	lastLog := time.Now()
@@ -172,6 +181,13 @@ func streamLoop(conn *srt.Conn, data []byte, bytesPerSec float64, chunkSize int,
 				streamID, loop-1,
 				float64(totalBytesSent)/(1024*1024),
 				time.Since(globalStart).Truncate(time.Second))
+
+			// Advance all PTS/DTS/PCR values by one loop duration so the
+			// downstream demuxer sees monotonically increasing timestamps
+			// across loop boundaries.
+			if loopPTSDelta > 0 && len(tsEntries) > 0 {
+				addTimestampOffset(data, tsEntries, loopPTSDelta)
+			}
 		}
 
 		for i := 0; i < len(data); i += chunkSize {
