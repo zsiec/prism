@@ -87,7 +87,7 @@ export class MultiviewManager {
 		const wrapper = document.createElement("div");
 		wrapper.style.display = "flex";
 		wrapper.style.width = "100%";
-		wrapper.style.height = "calc(100vh - 34px)";
+		wrapper.style.height = "calc(100vh - 38px)";
 
 		this.grid = document.createElement("div");
 		this.grid.style.display = "grid";

@@ -23,12 +23,14 @@ import {
 } from "./detail-panel";
 import { PerfOverlay, SingleStreamSnapshot } from "./perf-overlay";
 import { FullscreenButton } from "./fullscreen-btn";
+import { StreamInspector } from "./inspector";
 import { checkCapabilities, showCapabilityError } from "./capabilities";
 
 /** Configuration options for a PrismPlayer instance. */
 interface PlayerOptions {
 	condensed?: boolean;
 	muteAudio?: boolean;
+	inspectorMount?: HTMLElement;
 	onStreamConnected?: (streamKey: string) => void;
 	onStreamDisconnected?: (streamKey: string) => void;
 }
@@ -81,6 +83,7 @@ export class PrismPlayer {
 	private audioTrackSelector: AudioTrackSelector | null = null;
 	private fullscreenBtn: FullscreenButton | null = null;
 	private perfOverlay: PerfOverlay;
+	private inspector: StreamInspector | null = null;
 	private perfStartTime = 0;
 
 	private decodeFpsCounter = 0;
@@ -210,6 +213,10 @@ export class PrismPlayer {
 
 		this.perfOverlay = new PerfOverlay(container, () => this.collectDiagnostics());
 
+		if (options.inspectorMount && !options.condensed) {
+			this.inspector = new StreamInspector(options.inspectorMount, this.metricsStore);
+		}
+
 		if (!options.condensed && document.fullscreenEnabled) {
 			this.fullscreenBtn = new FullscreenButton(this.playerUI);
 		}
@@ -288,6 +295,7 @@ export class PrismPlayer {
 					}
 
 					this.renderer.start();
+					this.inspector?.show();
 					this.connectedStreamKey = streamKey;
 					this.reconnectDelay = 2000;
 					this.perfOverlay.setStreamKey(streamKey);
@@ -306,6 +314,7 @@ export class PrismPlayer {
 						);
 						this.pendingVideoCodec = null;
 					}
+					this.metricsStore.recordFrameEvent(isKeyframe, data.byteLength);
 					this.videoDecoder.decode(data, isKeyframe, timestamp, false);
 				},
 				onAudioFrame: (data: Uint8Array, timestamp: number, _groupID: number, trackIndex: number) => {
@@ -323,6 +332,7 @@ export class PrismPlayer {
 				onClose: () => {
 					this.stats.stop();
 					this.hud.stop();
+					this.inspector?.hide();
 					this.vuMeter.hide();
 					this.playerUI.setForceVisible(false);
 					this.closePanel();
@@ -434,6 +444,7 @@ export class PrismPlayer {
 		// If still waiting for AVC/HEVC description, skip — the decoder
 		// can't handle AVC1 data without the configuration record.
 		if (this.pendingVideoCodec) return;
+		this.metricsStore.recordFrameEvent(isKeyframe, data.byteLength);
 		this.videoDecoder.decode(data, isKeyframe, timestamp, false);
 	}
 
@@ -474,6 +485,7 @@ export class PrismPlayer {
 		this.vuMeter.destroy();
 		this.hud.destroy();
 		this.perfOverlay.destroy();
+		this.inspector?.destroy();
 		if (this.fullscreenBtn) this.fullscreenBtn.destroy();
 		this.playerUI.destroy();
 		this.container.innerHTML = "";
@@ -695,6 +707,7 @@ export class PrismPlayer {
 		this.primaryAudioDecoder = null;
 		this.loudnessMode = false;
 		this.vuMeter.hide();
+		this.inspector?.hide();
 		this.playerUI.setForceVisible(false);
 		this.renderer.destroy();
 		this.metricsStore.reset();
@@ -821,6 +834,16 @@ export class PrismPlayer {
 				this.moqTransport.subscribeAudio([trackIndex]);
 			}
 		}
+	}
+
+	/** Return the metrics store for external consumers. */
+	getMetricsStore(): MetricsStore {
+		return this.metricsStore;
+	}
+
+	/** Toggle the inspector dashboard overlay. */
+	toggleInspector(): void {
+		this.inspector?.toggleDashboard();
 	}
 
 	private enterLoudnessMode(): void {
