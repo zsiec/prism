@@ -39,6 +39,11 @@ let singlePlayer: PrismPlayer | null = null;
 let multiview: MultiviewManager | null = null;
 let cachedStreams: StreamListEntry[] = [];
 
+function hideEmptyState(): void {
+	const el = document.getElementById("emptyState");
+	if (el) el.remove();
+}
+
 const params = new URLSearchParams(window.location.search);
 const urlStreamKey = params.get("stream");
 const urlMode = params.get("mode");
@@ -52,6 +57,7 @@ function initSingleMode(): void {
 	const maxDim = Math.max(window.innerWidth, window.innerHeight);
 	const cap = Math.min(maxDim, 1920);
 	singlePlayer = new PrismPlayer(playerContainer, {
+		inspectorMount: singleModeEl,
 		onStreamConnected: (key) => {
 			statusEl.textContent = `Connected to "${key}"`;
 			connectBtn.disabled = false;
@@ -97,7 +103,7 @@ function switchMode(mode: "single" | "multi"): void {
 		streamListEl.style.display = "flex";
 		statusEl.style.display = "block";
 		controlsEl.style.display = "flex";
-		headerEl.style.height = "40px";
+		headerEl.style.height = "48px";
 
 		if (multiview) {
 			multiview.destroy();
@@ -113,7 +119,7 @@ function switchMode(mode: "single" | "multi"): void {
 		streamListEl.style.display = "none";
 		statusEl.style.display = "none";
 		controlsEl.style.display = "none";
-		headerEl.style.height = "32px";
+		headerEl.style.height = "36px";
 
 		if (singlePlayer) {
 			singlePlayer.disconnect();
@@ -148,6 +154,7 @@ connectBtn.addEventListener("click", () => {
 	}
 
 	initSingleMode();
+	hideEmptyState();
 	connectBtn.disabled = true;
 	statusEl.textContent = `Connecting to "${streamKey}"...`;
 	singlePlayer!.connect(streamKey);
@@ -257,17 +264,46 @@ async function fetchStreams(): Promise<void> {
 
 		streamListEl.innerHTML = "";
 		for (const stream of streams) {
-			const tag = document.createElement("span");
+			const tag = document.createElement("div");
 			tag.className = "stream-tag";
-			const label = stream.description
+			tag.title = `${stream.viewers} viewer${stream.viewers !== 1 ? "s" : ""}`;
+
+			const dot = document.createElement("span");
+			dot.className = "stream-dot";
+			tag.appendChild(dot);
+
+			const name = document.createElement("span");
+			name.textContent = stream.description
 				? `${stream.key} — ${stream.description}`
 				: stream.key;
-			tag.textContent = label;
-			tag.title = `${stream.viewers} viewer${stream.viewers !== 1 ? "s" : ""}`;
+			tag.appendChild(name);
+
+			if (stream.height && stream.height > 0) {
+				const badge = document.createElement("span");
+				badge.className = "stream-badge res";
+				badge.textContent = stream.height >= 1080 ? "1080p" : stream.height >= 720 ? "720p" : `${stream.height}p`;
+				tag.appendChild(badge);
+			}
+
+			if (stream.hasCaptions) {
+				const badge = document.createElement("span");
+				badge.className = "stream-badge cc";
+				badge.textContent = "CC";
+				tag.appendChild(badge);
+			}
+
+			if (stream.hasScte35) {
+				const badge = document.createElement("span");
+				badge.className = "stream-badge scte";
+				badge.textContent = "S35";
+				tag.appendChild(badge);
+			}
+
 			tag.addEventListener("click", () => {
 				if (currentMode === "single") {
 					streamKeyInput.value = stream.key;
 					initSingleMode();
+					hideEmptyState();
 					singlePlayer!.connect(stream.key);
 				}
 			});
@@ -316,6 +352,7 @@ function showClickToStart(onStart: () => void, target: HTMLElement): void {
 }
 
 function showClickToPlay(streamKey: string): void {
+	hideEmptyState();
 	showClickToStart(() => {
 		singlePlayer!.connect(streamKey);
 		connectBtn.disabled = true;
