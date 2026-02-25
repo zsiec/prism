@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<!--
+  Prism Player — Standalone Library Demo
+
+  This page imports PrismPlayer from the built library bundle (dist-lib/prism.js)
+  to verify the packaging works end-to-end.
+
+  Usage:
+    1. cd web && npm run build:lib      # Build the library bundle
+    2. Start the Prism server            # make run (serves API on :4444)
+    3. cd web && npm run dev             # Vite dev server proxies /api to Prism
+    4. Open http://localhost:5173/examples/standalone.html?stream=YOUR_STREAM_KEY
+
+  Or use the shorthand:
+    npm run demo:lib    # builds lib + starts Vite dev server
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prism Player — Standalone Demo</title>
+<style>
+  * { margin: 0; box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    background: #111; color: #eee;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 2rem; min-height: 100vh;
+  }
+  h1 { font-size: 1.4rem; margin-bottom: 1rem; font-weight: 500; }
+  .controls {
+    display: flex; gap: 0.5rem; margin-bottom: 1rem; align-items: center;
+  }
+  input {
+    padding: 0.4rem 0.6rem; border-radius: 4px; border: 1px solid #444;
+    background: #222; color: #eee; font-size: 0.9rem; width: 14rem;
+  }
+  button {
+    padding: 0.4rem 1rem; border-radius: 4px; border: none;
+    background: #2563eb; color: #fff; font-size: 0.9rem; cursor: pointer;
+  }
+  button:hover { background: #1d4ed8; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  #status {
+    font-size: 0.8rem; color: #888; margin-bottom: 1rem;
+  }
+  #player-container {
+    width: min(960px, 100%); aspect-ratio: 16/9;
+    background: #000; border-radius: 6px; overflow: hidden;
+  }
+</style>
+</head>
+<body>
+
+<h1>Prism Player</h1>
+
+<div class="controls">
+  <input id="stream-key" type="text" placeholder="Stream key (e.g. demo)">
+  <button id="connect-btn">Connect</button>
+</div>
+<div id="status">Not connected</div>
+<div id="player-container"></div>
+
+<script type="module">
+  import { PrismPlayer } from "../dist-lib/prism.js";
+
+  const streamInput = document.getElementById("stream-key");
+  const connectBtn = document.getElementById("connect-btn");
+  const statusEl = document.getElementById("status");
+  const container = document.getElementById("player-container");
+
+  // Read ?stream= from URL params as default
+  const params = new URLSearchParams(location.search);
+  if (params.get("stream")) {
+    streamInput.value = params.get("stream");
+  }
+
+  const player = new PrismPlayer(container, {
+    onStreamConnected(key) {
+      statusEl.textContent = `Connected to "${key}"`;
+      connectBtn.textContent = "Disconnect";
+    },
+    onStreamDisconnected(_key) {
+      statusEl.textContent = "Disconnected";
+      connectBtn.textContent = "Connect";
+    },
+  });
+
+  connectBtn.addEventListener("click", () => {
+    if (player.isConnected()) {
+      player.disconnect();
+    } else {
+      const key = streamInput.value.trim();
+      if (!key) return;
+      statusEl.textContent = `Connecting to "${key}"...`;
+      player.connect(key);
+    }
+  });
+</script>
+
+</body>
+</html>

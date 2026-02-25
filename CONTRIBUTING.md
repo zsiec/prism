@@ -21,6 +21,7 @@ All changes must pass `make check`, which runs:
 
 - `gofmt -s` — Go code formatting with simplification
 - `go vet` — Go static analysis
+- `staticcheck` — Extended static analysis ([install](https://staticcheck.dev/))
 - `go test -race` — All tests with the race detector enabled
 - `npx tsc --noEmit` — TypeScript type checking (strict mode)
 

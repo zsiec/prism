@@ -47,6 +47,61 @@ ffmpeg -re -i input.ts -c copy -f mpegts srt://localhost:6000?streamid=mystream
 
 Then open `https://localhost:4444/?stream=mystream`.
 
+## Examples
+
+Prism's packages are designed to be used as a library. The `examples/` directory contains standalone programs showing how to embed Prism in your own application, and `web/examples/` shows how to use the player in a browser.
+
+### Minimal server (Go)
+
+A stripped-down version of `cmd/prism` — SRT ingest, demux, and WebTransport delivery in ~60 lines:
+
+```bash
+go run ./examples/minimal-server
+ffmpeg -re -i input.ts -c copy -f mpegts srt://localhost:6000?streamid=demo
+open https://localhost:4443
+```
+
+### Custom ingest (Go)
+
+Feed any MPEG-TS `io.Reader` directly into the pipeline — no SRT required:
+
+```bash
+go run ./examples/custom-ingest input.ts
+open https://localhost:4443/?stream=file
+```
+
+### Standalone web player (TypeScript)
+
+Embed `PrismPlayer` in your own page using the built library bundle:
+
+```bash
+cd web && npm run demo:lib   # builds dist-lib/prism.js + starts Vite dev server
+# (start the Prism server in another terminal: make run)
+open http://localhost:5173/examples/standalone.html?stream=demo
+```
+
+The HTML is ~80 lines and shows the full API: create a player, connect to a stream key, handle lifecycle callbacks. See [`web/examples/standalone.html`](web/examples/standalone.html).
+
+### Building the web player library
+
+To use `PrismPlayer` in your own project:
+
+```bash
+cd web && npm run build:lib   # outputs web/dist-lib/prism.js
+```
+
+```js
+import { PrismPlayer } from "./dist-lib/prism.js";
+
+const player = new PrismPlayer(document.getElementById("container"), {
+  onStreamConnected(key) { console.log("connected:", key); },
+  onStreamDisconnected(key) { console.log("disconnected:", key); },
+});
+player.connect("demo");
+```
+
+The library also exports `MoQTransport`, `MoQMultiviewTransport`, `MetricsStore`, and related types for advanced use cases.
+
 ## Architecture
 
 ```
@@ -131,11 +186,10 @@ make demo
 make demo-full
 ```
 
-`make check` requires [staticcheck](https://staticcheck.dev/) and [govulncheck](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck):
+`make check` requires [staticcheck](https://staticcheck.dev/):
 
 ```bash
 go install honnef.co/go/tools/cmd/staticcheck@latest
-go install golang.org/x/vuln/cmd/govulncheck@latest
 ```
 
 ## Security Considerations
