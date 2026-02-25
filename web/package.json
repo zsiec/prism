@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "build:lib": "tsc && vite build --config vite.lib.config.ts",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "demo:lib": "npm run build:lib && vite dev"
   },
   "devDependencies": {
     "@webgpu/types": "^0.1.69",
