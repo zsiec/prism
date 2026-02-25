@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/zsiec/prism/internal/scte35"
+	"github.com/zsiec/prism/scte35"
 )
 
 const tsPacketSize = 188
