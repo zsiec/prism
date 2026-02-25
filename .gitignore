@@ -8,6 +8,7 @@ bin/
 # Web
 web/node_modules/
 web/dist/
+web/dist-lib/
 
 # TLS
 *.pem

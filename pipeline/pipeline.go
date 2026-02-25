@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/zsiec/ccx"
-	"github.com/zsiec/prism/internal/demux"
-	"github.com/zsiec/prism/internal/distribution"
-	"github.com/zsiec/prism/internal/media"
-	"github.com/zsiec/prism/internal/moq"
+	"github.com/zsiec/prism/demux"
+	"github.com/zsiec/prism/distribution"
+	"github.com/zsiec/prism/media"
+	"github.com/zsiec/prism/moq"
 )
 
 // Broadcaster is the subset of distribution.Relay that the pipeline uses

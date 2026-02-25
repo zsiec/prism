@@ -38,14 +38,14 @@ make demo-full
 Single Go module with web frontend:
 
 - `cmd/prism/` — Entry point, wires everything together
-- `internal/ingest/` — Stream ingest (SRT)
-- `internal/demux/` — MPEG-TS demuxer, H.264/AAC parsers
-- `internal/media/` — Frame types and pipeline orchestration
-- `internal/distribution/` — WebTransport server, fan-out relay, MoQ session management
-- `internal/moq/` — MoQ Transport wire protocol codec (control messages, format conversion)
-- `internal/stream/` — Stream lifecycle management
-- `internal/certs/` — Self-signed cert generation for WebTransport
-- `internal/pipeline/` — Demux-to-distribution pipeline orchestration
+- `ingest/` — Stream ingest (SRT)
+- `demux/` — MPEG-TS demuxer, H.264/AAC parsers
+- `media/` — Frame types and pipeline orchestration
+- `distribution/` — WebTransport server, fan-out relay, MoQ session management
+- `moq/` — MoQ Transport wire protocol codec (control messages, format conversion)
+- `stream/` — Stream lifecycle management
+- `certs/` — Self-signed cert generation for WebTransport
+- `pipeline/` — Demux-to-distribution pipeline orchestration
 - `web/` — Vanilla TypeScript viewer (Vite, WebTransport, WebCodecs)
 - `test/tools/gen-streams/` — Test stream generator (video, audio, captions, SCTE-35, timecode)
 - `test/tools/inject-captions/` — CEA-608 caption injector

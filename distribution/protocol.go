@@ -1,13 +1,13 @@
 // Package distribution implements the WebTransport-based viewer delivery
 // layer, including the fan-out relay, MoQ session management, and the
 // HTTP/QUIC server that ties them together. The low-level MoQ wire protocol
-// codec lives in [github.com/zsiec/prism/internal/moq].
+// codec lives in [github.com/zsiec/prism/moq].
 package distribution
 
 import (
 	"io"
 
-	"github.com/zsiec/prism/internal/media"
+	"github.com/zsiec/prism/media"
 )
 
 // Track ID constants used to identify media types in the MoQ catalog

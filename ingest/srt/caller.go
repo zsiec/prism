@@ -11,7 +11,7 @@ import (
 
 	srtgo "github.com/zsiec/srtgo"
 
-	"github.com/zsiec/prism/internal/ingest"
+	"github.com/zsiec/prism/ingest"
 )
 
 // PullRequest describes a remote SRT source to pull from.

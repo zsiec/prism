@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/zsiec/ccx"
-	"github.com/zsiec/prism/internal/mpegts"
+	"github.com/zsiec/prism/mpegts"
 )
 
 func TestCaptionHarness(t *testing.T) {

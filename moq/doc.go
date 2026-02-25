@@ -4,5 +4,5 @@
 // decoder configuration records), and typed error definitions.
 //
 // This package contains no session or relay logic; those higher-level
-// concerns live in [github.com/zsiec/prism/internal/distribution].
+// concerns live in [github.com/zsiec/prism/distribution].
 package moq

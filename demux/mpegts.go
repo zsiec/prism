@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/zsiec/ccx"
-	"github.com/zsiec/prism/internal/media"
-	"github.com/zsiec/prism/internal/mpegts"
-	"github.com/zsiec/prism/internal/scte35"
+	"github.com/zsiec/prism/media"
+	"github.com/zsiec/prism/mpegts"
+	"github.com/zsiec/prism/scte35"
 )
 
 const (

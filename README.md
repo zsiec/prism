@@ -64,18 +64,18 @@ Single Go binary, vanilla TypeScript frontend:
 | Package | Purpose |
 |---|---|
 | `cmd/prism/` | Entry point, wires everything together |
-| `internal/ingest/` | Stream ingest registry |
-| `internal/ingest/srt/` | SRT server (push) and caller (pull) |
-| `internal/demux/` | MPEG-TS demuxer, H.264/H.265/AAC parsers |
-| `internal/media/` | Frame types (`VideoFrame`, `AudioFrame`) |
-| `internal/distribution/` | WebTransport server, MoQ sessions, relay fan-out |
-| `internal/moq/` | MoQ Transport wire protocol codec |
-| `internal/pipeline/` | Demux-to-distribution orchestration |
-| `internal/stream/` | Stream lifecycle management |
-| `internal/mpegts/` | Low-level MPEG-TS packet/PES/PSI parsing |
-| `internal/scte35/` | SCTE-35 splice info encoding/decoding |
-| `internal/certs/` | Self-signed ECDSA certificate generation |
-| `internal/webtransport/` | WebTransport server on quic-go/HTTP3 |
+| `ingest/` | Stream ingest registry |
+| `ingest/srt/` | SRT server (push) and caller (pull) |
+| `demux/` | MPEG-TS demuxer, H.264/H.265/AAC parsers |
+| `media/` | Frame types (`VideoFrame`, `AudioFrame`) |
+| `distribution/` | WebTransport server, MoQ sessions, relay fan-out |
+| `moq/` | MoQ Transport wire protocol codec |
+| `pipeline/` | Demux-to-distribution orchestration |
+| `stream/` | Stream lifecycle management |
+| `mpegts/` | Low-level MPEG-TS packet/PES/PSI parsing |
+| `scte35/` | SCTE-35 splice info encoding/decoding |
+| `certs/` | Self-signed ECDSA certificate generation |
+| `webtransport/` | WebTransport server on quic-go/HTTP3 |
 | `web/` | Vanilla TypeScript viewer (Vite, WebTransport, WebCodecs) |
 
 ## Configuration

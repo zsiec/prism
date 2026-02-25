@@ -3,7 +3,7 @@ package moq
 import (
 	"encoding/binary"
 
-	"github.com/zsiec/prism/internal/demux"
+	"github.com/zsiec/prism/demux"
 )
 
 // AnnexBToAVC1 converts Annex B NALUs (4-byte start code prefixed) to AVC1

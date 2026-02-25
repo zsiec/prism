@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zsiec/prism/internal/distribution"
+	"github.com/zsiec/prism/distribution"
 )
 
 func TestNew(t *testing.T) {
