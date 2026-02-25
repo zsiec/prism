@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/zsiec/prism/internal/demux"
+	"github.com/zsiec/prism/demux"
 )
 
 // Compile-time interface check.

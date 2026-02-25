@@ -4,8 +4,8 @@ import (
 	"io"
 
 	"github.com/quic-go/quic-go/quicvarint"
-	"github.com/zsiec/prism/internal/media"
-	"github.com/zsiec/prism/internal/moq"
+	"github.com/zsiec/prism/media"
+	"github.com/zsiec/prism/moq"
 )
 
 // Compile-time interface check.

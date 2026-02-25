@@ -3,7 +3,7 @@ package distribution
 import (
 	"sync/atomic"
 
-	"github.com/zsiec/prism/internal/media"
+	"github.com/zsiec/prism/media"
 )
 
 // trySendVideo implements the damaged-group-aware video send logic shared

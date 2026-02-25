@@ -47,13 +47,13 @@ All changes must pass `make check`, which runs:
 make test
 
 # Run tests for a specific package
-go test -v -race ./internal/demux/
+go test -v -race ./demux/
 
 # Run fuzz tests (default 10s, adjust as needed)
-go test -fuzz=FuzzParseAnnexB -fuzztime=30s ./internal/demux/
+go test -fuzz=FuzzParseAnnexB -fuzztime=30s ./demux/
 
 # Run benchmarks
-go test -bench=. -benchmem ./internal/distribution/
+go test -bench=. -benchmem ./distribution/
 ```
 
 ## Project Structure

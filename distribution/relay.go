@@ -6,8 +6,8 @@ import (
 	"sync"
 
 	"github.com/zsiec/ccx"
-	"github.com/zsiec/prism/internal/media"
-	"github.com/zsiec/prism/internal/moq"
+	"github.com/zsiec/prism/media"
+	"github.com/zsiec/prism/moq"
 )
 
 // Viewer is the interface that a viewer session (single or mux) must implement

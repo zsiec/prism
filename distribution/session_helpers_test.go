@@ -4,7 +4,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/zsiec/prism/internal/media"
+	"github.com/zsiec/prism/media"
 )
 
 func TestTrySendVideoKeyframeResetsGroup(t *testing.T) {

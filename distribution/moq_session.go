@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/zsiec/ccx"
-	"github.com/zsiec/prism/internal/media"
-	"github.com/zsiec/prism/internal/moq"
-	"github.com/zsiec/prism/internal/webtransport"
+	"github.com/zsiec/prism/media"
+	"github.com/zsiec/prism/moq"
+	"github.com/zsiec/prism/webtransport"
 )
 
 // moqTrackSub holds state for a single track subscription within a MoQ session.

@@ -16,12 +16,12 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/zsiec/prism/internal/certs"
-	"github.com/zsiec/prism/internal/distribution"
-	"github.com/zsiec/prism/internal/ingest"
-	srtingest "github.com/zsiec/prism/internal/ingest/srt"
-	"github.com/zsiec/prism/internal/pipeline"
-	"github.com/zsiec/prism/internal/stream"
+	"github.com/zsiec/prism/certs"
+	"github.com/zsiec/prism/distribution"
+	"github.com/zsiec/prism/ingest"
+	srtingest "github.com/zsiec/prism/ingest/srt"
+	"github.com/zsiec/prism/pipeline"
+	"github.com/zsiec/prism/stream"
 )
 
 var version = "dev"

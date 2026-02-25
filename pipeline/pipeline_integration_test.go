@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/zsiec/ccx"
-	"github.com/zsiec/prism/internal/distribution"
-	"github.com/zsiec/prism/internal/media"
+	"github.com/zsiec/prism/distribution"
+	"github.com/zsiec/prism/media"
 )
 
 // testViewer implements distribution.Viewer to collect frames from the relay.

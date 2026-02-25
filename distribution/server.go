@@ -13,9 +13,9 @@ import (
 
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
-	"github.com/zsiec/prism/internal/certs"
-	"github.com/zsiec/prism/internal/moq"
-	"github.com/zsiec/prism/internal/webtransport"
+	"github.com/zsiec/prism/certs"
+	"github.com/zsiec/prism/moq"
+	"github.com/zsiec/prism/webtransport"
 )
 
 // StatsProvider is implemented by Pipeline to supply stream statistics

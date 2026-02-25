@@ -11,9 +11,9 @@ import (
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/quicvarint"
 	"github.com/zsiec/ccx"
-	"github.com/zsiec/prism/internal/media"
-	"github.com/zsiec/prism/internal/moq"
-	"github.com/zsiec/prism/internal/webtransport"
+	"github.com/zsiec/prism/media"
+	"github.com/zsiec/prism/moq"
+	"github.com/zsiec/prism/webtransport"
 )
 
 // buildClientSetupPayload builds a CLIENT_SETUP payload for testing.

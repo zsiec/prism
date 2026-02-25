@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zsiec/prism/internal/certs"
+	"github.com/zsiec/prism/certs"
 )
 
 func newTestServer(t *testing.T) *Server {

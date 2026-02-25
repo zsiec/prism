@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/zsiec/ccx"
-	"github.com/zsiec/prism/internal/media"
+	"github.com/zsiec/prism/media"
 )
 
 // mockViewer implements the Viewer interface for testing.

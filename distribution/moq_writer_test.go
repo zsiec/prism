@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/quic-go/quic-go/quicvarint"
-	"github.com/zsiec/prism/internal/media"
+	"github.com/zsiec/prism/media"
 )
 
 func TestMoQWriterSubgroupHeader(t *testing.T) {

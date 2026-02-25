@@ -7,7 +7,7 @@ import (
 	"fmt"
 
 	"github.com/quic-go/quic-go/quicvarint"
-	"github.com/zsiec/prism/internal/webtransport"
+	"github.com/zsiec/prism/webtransport"
 )
 
 // moqCatalog is the top-level catalog structure per draft-ietf-moq-catalogformat-01.
