@@ -131,6 +131,7 @@ type ServerConfig struct {
 	SRTPull      SRTPullFunc
 	SRTStop      SRTStopFunc
 	SRTList      SRTListFunc
+	ExtraRoutes  func(mux *http.ServeMux)
 }
 
 // streamResources bundles the relay and stats provider for a single live
@@ -225,6 +226,10 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/srt-pull", s.handleSRTPullCreate)
 	mux.HandleFunc("DELETE /api/srt-pull", s.handleSRTPullStop)
 	mux.HandleFunc("OPTIONS /api/srt-pull", s.handleSRTPullOptions)
+
+	if s.config.ExtraRoutes != nil {
+		s.config.ExtraRoutes(mux)
+	}
 }
 
 // APIHandler returns an http.Handler for the HTTPS REST API, including

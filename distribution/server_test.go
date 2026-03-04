@@ -221,6 +221,42 @@ func TestErrorResponsesAreJSON(t *testing.T) {
 	}
 }
 
+func TestExtraRoutesCalledOnAPIHandler(t *testing.T) {
+	t.Parallel()
+
+	cert, err := certs.Generate(24 * 60 * 60 * 1e9)
+	if err != nil {
+		t.Fatalf("certs.Generate: %v", err)
+	}
+
+	called := false
+	cfg := ServerConfig{
+		Addr: ":0",
+		Cert: cert,
+		ExtraRoutes: func(mux *http.ServeMux) {
+			called = true
+			mux.HandleFunc("GET /api/test-extra", func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})
+		},
+	}
+	srv, err := NewServer(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := srv.APIHandler()
+	if !called {
+		t.Fatal("ExtraRoutes was not called")
+	}
+
+	req := httptest.NewRequest("GET", "/api/test-extra", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}
+
 func TestNewServerValidation(t *testing.T) {
 	t.Parallel()
 
