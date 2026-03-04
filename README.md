@@ -15,6 +15,7 @@ Prism accepts MPEG-TS streams over SRT, demuxes H.264/H.265 video and AAC audio,
 - **SMPTE 12M timecode** — Extracted from pic_timing SEI
 - **GOP cache** — Late-joining viewers start from the most recent keyframe
 - **Multiview** — 9-stream composited grid with per-tile audio solo
+- **Control track** — Application-level JSON state broadcast to all viewers via MoQ
 - **WebCodecs decoding** — Hardware-accelerated video/audio decode in the browser
 
 ## Quick Start
@@ -160,6 +161,19 @@ The server listens on:
 | `POST` | `/api/srt-pull` | Start an SRT pull from a remote address |
 | `GET` | `/api/srt-pull` | List active SRT pulls |
 | `DELETE` | `/api/srt-pull?streamKey=...` | Stop an SRT pull |
+
+## Library Extension Points
+
+When embedding Prism via the `distribution` package, `ServerConfig` exposes hooks for customization:
+
+| Field | Type | Description |
+|---|---|---|
+| `ExtraRoutes` | `func(mux *http.ServeMux)` | Register additional HTTP handlers on the server's mux |
+| `OnStreamRegistered` | `func(key string, relay *Relay)` | Called after a new stream relay is created |
+| `OnStreamUnregistered` | `func(key string)` | Called after a stream is removed |
+| `ControlCh` | `<-chan []byte` | JSON control state broadcast — each send is delivered to all viewers as a MoQ control track object |
+
+The `ControlBroadcaster` type handles per-viewer fan-out of control messages with non-blocking sends (slow viewers drop messages rather than blocking the source).
 
 ## Development
 
