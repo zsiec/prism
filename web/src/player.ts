@@ -98,6 +98,7 @@ export class PrismPlayer {
 	private destroyed = false;
 	private globalMute: boolean;
 	private reconnectDelay = 2000;
+	private resumeAudioHandler: (() => void) | null = null;
 
 	constructor(container: HTMLElement, options: PlayerOptions = {}) {
 		this.container = container;
@@ -141,14 +142,16 @@ export class PrismPlayer {
 		container.appendChild(this.statsEl);
 		container.appendChild(this.captionsEl);
 
-		// Resume suspended AudioContext on first user gesture (browser autoplay policy).
-		const resumeAudio = () => {
+		// Resume suspended AudioContext on user gesture (browser autoplay policy).
+		// Not { once: true } — the context is recreated on each connection, so we
+		// need this to keep working across disconnect/reconnect cycles.
+		this.resumeAudioHandler = () => {
 			if (this.sharedAudioContext && this.sharedAudioContext.state === "suspended") {
 				this.sharedAudioContext.resume();
 			}
 		};
-		document.addEventListener("click", resumeAudio, { once: true });
-		document.addEventListener("keydown", resumeAudio, { once: true });
+		document.addEventListener("click", this.resumeAudioHandler);
+		document.addEventListener("keydown", this.resumeAudioHandler);
 
 		this.playerUI = new PlayerUI({
 			container: this.container,
@@ -488,6 +491,11 @@ export class PrismPlayer {
 		this.inspector?.destroy();
 		if (this.fullscreenBtn) this.fullscreenBtn.destroy();
 		this.playerUI.destroy();
+		if (this.resumeAudioHandler) {
+			document.removeEventListener("click", this.resumeAudioHandler);
+			document.removeEventListener("keydown", this.resumeAudioHandler);
+			this.resumeAudioHandler = null;
+		}
 		this.container.innerHTML = "";
 	}
 

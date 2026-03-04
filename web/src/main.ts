@@ -38,6 +38,7 @@ let currentMode: "single" | "multi" = "single";
 let singlePlayer: PrismPlayer | null = null;
 let multiview: MultiviewManager | null = null;
 let cachedStreams: StreamListEntry[] = [];
+let lastSingleStreamKey: string | null = null;
 
 function hideEmptyState(): void {
 	const el = document.getElementById("emptyState");
@@ -66,6 +67,7 @@ function initSingleMode(): void {
 		onStreamDisconnected: (key) => {
 			statusEl.textContent = `Disconnected from "${key}". Reconnecting...`;
 			connectBtn.textContent = "Watch";
+			connectBtn.disabled = false;
 		},
 	});
 	singlePlayer.setMaxResolution(cap);
@@ -111,8 +113,17 @@ function switchMode(mode: "single" | "multi"): void {
 		}
 
 		initSingleMode();
-		statusEl.textContent = "Enter a stream key and click Watch to connect.";
-		connectBtn.textContent = "Watch";
+
+		if (lastSingleStreamKey) {
+			hideEmptyState();
+			connectBtn.disabled = true;
+			statusEl.textContent = `Connecting to "${lastSingleStreamKey}"...`;
+			singlePlayer!.connect(lastSingleStreamKey);
+		} else {
+			statusEl.textContent = "Enter a stream key and click Watch to connect.";
+			connectBtn.textContent = "Watch";
+			connectBtn.disabled = false;
+		}
 	} else {
 		singleModeEl.style.display = "none";
 		multiModeEl.style.display = "block";
@@ -141,6 +152,7 @@ connectBtn.addEventListener("click", () => {
 
 	if (singlePlayer?.isConnected()) {
 		singlePlayer.disconnect();
+		lastSingleStreamKey = null;
 		statusEl.textContent = "Disconnected.";
 		connectBtn.textContent = "Watch";
 		connectBtn.disabled = false;
@@ -157,6 +169,7 @@ connectBtn.addEventListener("click", () => {
 	hideEmptyState();
 	connectBtn.disabled = true;
 	statusEl.textContent = `Connecting to "${streamKey}"...`;
+	lastSingleStreamKey = streamKey;
 	singlePlayer!.connect(streamKey);
 });
 
@@ -230,6 +243,7 @@ srtPullConnect.addEventListener("click", async () => {
 
 		if (currentMode === "single") {
 			streamKeyInput.value = streamKey;
+			lastSingleStreamKey = streamKey;
 			initSingleMode();
 			singlePlayer!.connect(streamKey);
 			statusEl.textContent = `Connected to SRT pull from ${address}`;
@@ -302,6 +316,7 @@ async function fetchStreams(): Promise<void> {
 			tag.addEventListener("click", () => {
 				if (currentMode === "single") {
 					streamKeyInput.value = stream.key;
+					lastSingleStreamKey = stream.key;
 					initSingleMode();
 					hideEmptyState();
 					singlePlayer!.connect(stream.key);
@@ -354,6 +369,7 @@ function showClickToStart(onStart: () => void, target: HTMLElement): void {
 function showClickToPlay(streamKey: string): void {
 	hideEmptyState();
 	showClickToStart(() => {
+		lastSingleStreamKey = streamKey;
 		singlePlayer!.connect(streamKey);
 		connectBtn.disabled = true;
 		statusEl.textContent = `Connecting to "${streamKey}"...`;
