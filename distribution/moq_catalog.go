@@ -42,7 +42,9 @@ type moqSelectionParams struct {
 }
 
 // buildMoQCatalog assembles the catalog JSON for a stream.
-func buildMoQCatalog(streamKey string, relay *Relay) ([]byte, error) {
+// If controlEnabled is true, a "control" track is included in the catalog
+// for application-level state broadcast (e.g., switcher control room state).
+func buildMoQCatalog(streamKey string, relay *Relay, controlEnabled bool) ([]byte, error) {
 	vi := relay.VideoInfo()
 	ai := relay.AudioInfo()
 
@@ -97,6 +99,16 @@ func buildMoQCatalog(streamKey string, relay *Relay) ([]byte, error) {
 			Codec: "application/json",
 		},
 	})
+
+	// Control track (application-level state broadcast as JSON)
+	if controlEnabled {
+		catalog.Tracks = append(catalog.Tracks, moqCatalogTrack{
+			Name: "control",
+			SelectionParams: moqSelectionParams{
+				Codec: "application/json",
+			},
+		})
+	}
 
 	return json.Marshal(catalog)
 }

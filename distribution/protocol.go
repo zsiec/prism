@@ -31,6 +31,7 @@ const (
 	priorityVideo    = 128
 	priorityAudio    = 128
 	priorityCaptions = 200
+	priorityControl  = 210
 	priorityStats    = 220
 )
 

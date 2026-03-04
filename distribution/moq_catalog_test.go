@@ -8,7 +8,7 @@ import (
 func TestBuildMoQCatalogBasic(t *testing.T) {
 	t.Parallel()
 	relay := NewRelay()
-	data, err := buildMoQCatalog("teststream", relay)
+	data, err := buildMoQCatalog("teststream", relay, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestBuildMoQCatalogMultiAudio(t *testing.T) {
 	relay := NewRelay()
 	relay.SetAudioTrackCount(3)
 
-	data, err := buildMoQCatalog("multi", relay)
+	data, err := buildMoQCatalog("multi", relay, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestBuildMoQCatalogCustomVideoInfo(t *testing.T) {
 	relay.videoInfoSet = true
 	relay.mu.Unlock()
 
-	data, err := buildMoQCatalog("4k", relay)
+	data, err := buildMoQCatalog("4k", relay, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestBuildMoQCatalogCustomVideoInfo(t *testing.T) {
 func TestBuildMoQCatalogJSONFieldNames(t *testing.T) {
 	t.Parallel()
 	relay := NewRelay()
-	data, err := buildMoQCatalog("test", relay)
+	data, err := buildMoQCatalog("test", relay, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestBuildMoQCatalogCustomAudioInfo(t *testing.T) {
 	relay := NewRelay()
 	relay.SetAudioInfo(AudioInfo{Codec: "mp4a.40.05", SampleRate: 44100, Channels: 1})
 
-	data, err := buildMoQCatalog("custom-audio", relay)
+	data, err := buildMoQCatalog("custom-audio", relay, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,5 +187,45 @@ func TestBuildMoQCatalogCustomAudioInfo(t *testing.T) {
 	}
 	if ap.ChannelConfig != "1" {
 		t.Fatalf("audio channelConfig = %q", ap.ChannelConfig)
+	}
+}
+
+func TestBuildMoQCatalogControlTrack(t *testing.T) {
+	t.Parallel()
+	relay := NewRelay()
+
+	// Without control enabled: 4 tracks (video + audio0 + captions + stats)
+	dataNoControl, err := buildMoQCatalog("test", relay, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var catNoControl moqCatalog
+	if err := json.Unmarshal(dataNoControl, &catNoControl); err != nil {
+		t.Fatal(err)
+	}
+	if len(catNoControl.Tracks) != 4 {
+		t.Fatalf("without control: track count = %d, want 4", len(catNoControl.Tracks))
+	}
+
+	// With control enabled: 5 tracks (video + audio0 + captions + stats + control)
+	dataWithControl, err := buildMoQCatalog("test", relay, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var catWithControl moqCatalog
+	if err := json.Unmarshal(dataWithControl, &catWithControl); err != nil {
+		t.Fatal(err)
+	}
+	if len(catWithControl.Tracks) != 5 {
+		t.Fatalf("with control: track count = %d, want 5", len(catWithControl.Tracks))
+	}
+
+	// Verify the control track is last and has the right codec
+	controlTrack := catWithControl.Tracks[4]
+	if controlTrack.Name != "control" {
+		t.Fatalf("control track name = %q, want %q", controlTrack.Name, "control")
+	}
+	if controlTrack.SelectionParams.Codec != "application/json" {
+		t.Fatalf("control track codec = %q, want %q", controlTrack.SelectionParams.Codec, "application/json")
 	}
 }

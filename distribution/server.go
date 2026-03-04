@@ -143,6 +143,15 @@ type ServerConfig struct {
 	// the server's stream map. It is NOT called if the stream key
 	// was not present. The callback is invoked outside the server's mutex.
 	OnStreamUnregistered func(key string)
+
+	// ControlCh receives JSON-encoded control state. If set, a "control"
+	// track is advertised in the MoQ catalog and subscribers receive state
+	// updates as JSON objects. Each send produces one MoQ group.
+	//
+	// Note: this is a single Go channel, so only one MoQ subscriber will
+	// receive each message. For multi-viewer fan-out, the sender should
+	// provide per-session channels or a broadcast mechanism in a future phase.
+	ControlCh <-chan []byte
 }
 
 // streamResources bundles the relay and stats provider for a single live
@@ -415,6 +424,7 @@ func (s *Server) setupMoQ(r *http.Request, session *webtransport.Session, contro
 		StreamKey:     streamKey,
 		Relay:         relay,
 		StatsProvider: s.GetPipeline,
+		ControlCh:     s.config.ControlCh,
 	})
 
 	pathKey, err := moqSession.handleSetup()

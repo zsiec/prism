@@ -50,6 +50,7 @@ type MoQSession struct {
 	controlReader *bufio.Reader // persistent buffered reader for control stream
 	relay         *Relay
 	statsProvider StatsProviderFunc
+	controlCh     <-chan []byte
 	controlMu     sync.Mutex
 
 	mu             sync.RWMutex
@@ -78,6 +79,7 @@ type MoQSessionConfig struct {
 	StreamKey     string
 	Relay         *Relay
 	StatsProvider StatsProviderFunc
+	ControlCh     <-chan []byte
 }
 
 // NewMoQSession creates a new MoQ session for the given stream key.
@@ -91,6 +93,7 @@ func NewMoQSession(cfg MoQSessionConfig) *MoQSession {
 		controlReader: bufio.NewReader(cfg.Control),
 		relay:         cfg.Relay,
 		statsProvider: cfg.StatsProvider,
+		controlCh:     cfg.ControlCh,
 		subscriptions: make(map[string]*moqTrackSub),
 	}
 }
@@ -260,6 +263,9 @@ func (m *MoQSession) handleSubscribe(ctx context.Context, sub moq.Subscribe) {
 	case "stats":
 		m.handleStatsSubscribe(ctx, sub, alias)
 
+	case "control":
+		m.handleControlSubscribe(ctx, sub, alias)
+
 	default:
 		// Check for audio tracks: "audio0", "audio1", etc.
 		if suffix, ok := strings.CutPrefix(trackName, "audio"); ok {
@@ -274,7 +280,7 @@ func (m *MoQSession) handleSubscribe(ctx context.Context, sub moq.Subscribe) {
 
 // handleCatalogSubscribe builds and delivers the catalog, then sends SUBSCRIBE_OK.
 func (m *MoQSession) handleCatalogSubscribe(ctx context.Context, sub moq.Subscribe, alias uint64) {
-	catalogJSON, err := buildMoQCatalog(m.streamKey, m.relay)
+	catalogJSON, err := buildMoQCatalog(m.streamKey, m.relay, m.controlCh != nil)
 	if err != nil {
 		m.sendSubscribeError(sub.RequestID, 500, "catalog build failed")
 		return
@@ -683,6 +689,84 @@ func (m *MoQSession) writeStatsLoop(ctx context.Context, sub *moqTrackSub) {
 			if err != nil {
 				stream.Close()
 				m.log.Debug("stats write failed", "error", err)
+				return
+			}
+
+			m.bytesSent.Add(n + sub.writer.StreamHeaderSize())
+			groupID++
+			stream.Close()
+		}
+	}
+}
+
+// handleControlSubscribe sets up the control track subscription and starts the write loop.
+// The control track delivers application-level JSON state updates (e.g., switcher control
+// room state) to connected browsers. It is only available when ControlCh is configured
+// in ServerConfig.
+func (m *MoQSession) handleControlSubscribe(ctx context.Context, sub moq.Subscribe, alias uint64) {
+	if m.controlCh == nil {
+		m.sendSubscribeError(sub.RequestID, 404, "control track not available")
+		return
+	}
+
+	subCtx, subCancel := context.WithCancel(ctx)
+
+	trackSub := &moqTrackSub{
+		requestID:  sub.RequestID,
+		trackAlias: alias,
+		trackName:  "control",
+		writer:     NewMoQWriter(alias, priorityControl),
+		cancel:     subCancel,
+	}
+
+	m.mu.Lock()
+	m.subscriptions["control"] = trackSub
+	m.mu.Unlock()
+
+	m.sendSubscribeOK(sub.RequestID, alias, moq.GroupOrderAscending, false, 0, 0)
+
+	go m.writeControlLoop(subCtx, trackSub, m.controlCh)
+
+	m.log.Debug("control track subscribed",
+		"alias", alias,
+		"requestID", sub.RequestID)
+}
+
+// writeControlLoop reads JSON state snapshots from the control channel and sends
+// each as a MoQ group on a new uni-stream, following the same pattern as writeStatsLoop.
+func (m *MoQSession) writeControlLoop(ctx context.Context, sub *moqTrackSub, ch <-chan []byte) {
+	var groupID uint32
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case data, ok := <-ch:
+			if !ok {
+				return
+			}
+
+			if m.closed.Load() {
+				return
+			}
+
+			stream, err := m.session.OpenUniStreamSync(ctx)
+			if err != nil {
+				m.log.Debug("control stream open failed", "error", err)
+				return
+			}
+
+			tsMS := uint32(time.Now().UnixMilli())
+			if err := sub.writer.WriteStreamHeader(stream, 0, groupID, tsMS); err != nil {
+				stream.Close()
+				m.log.Debug("control header write failed", "error", err)
+				return
+			}
+
+			n, err := sub.writer.WriteCaptionFrame(stream, data, tsMS)
+			if err != nil {
+				stream.Close()
+				m.log.Debug("control write failed", "error", err)
 				return
 			}
 
