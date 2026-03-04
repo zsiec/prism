@@ -132,6 +132,17 @@ type ServerConfig struct {
 	SRTStop      SRTStopFunc
 	SRTList      SRTListFunc
 	ExtraRoutes  func(mux *http.ServeMux)
+
+	// OnStreamRegistered is called after a new stream relay is created
+	// and added to the server's stream map. It is NOT called when
+	// RegisterStream returns an existing relay for a duplicate key.
+	// The callback is invoked outside the server's mutex.
+	OnStreamRegistered func(key string, relay *Relay)
+
+	// OnStreamUnregistered is called after a stream is removed from
+	// the server's stream map. It is NOT called if the stream key
+	// was not present. The callback is invoked outside the server's mutex.
+	OnStreamUnregistered func(key string)
 }
 
 // streamResources bundles the relay and stats provider for a single live
@@ -169,22 +180,36 @@ func NewServer(config ServerConfig) (*Server, error) {
 
 // RegisterStream creates a Relay for the given stream key and returns it.
 // If the stream already has a relay, the existing one is returned.
+// For new streams, OnStreamRegistered is called (if set) after releasing
+// the lock.
 func (s *Server) RegisterStream(streamKey string) *Relay {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if sr, ok := s.streams[streamKey]; ok {
+		s.mu.Unlock()
 		return sr.relay
 	}
 	r := NewRelay()
 	s.streams[streamKey] = &streamResources{relay: r}
+	s.mu.Unlock()
+
+	if s.config.OnStreamRegistered != nil {
+		s.config.OnStreamRegistered(streamKey, r)
+	}
 	return r
 }
 
 // UnregisterStream removes the relay and pipeline for a stream key.
+// If the stream existed, OnStreamUnregistered is called (if set) after
+// releasing the lock.
 func (s *Server) UnregisterStream(streamKey string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	_, existed := s.streams[streamKey]
 	delete(s.streams, streamKey)
+	s.mu.Unlock()
+
+	if existed && s.config.OnStreamUnregistered != nil {
+		s.config.OnStreamUnregistered(streamKey)
+	}
 }
 
 // SetPipeline associates a StatsProvider with a stream key. The stream
