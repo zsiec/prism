@@ -42,16 +42,16 @@ type StatsProviderFunc func(streamKey string) StatsProvider
 // interface so the Relay can fan out frames to it. Internally, it dispatches
 // frames to per-track subscriptions, each with its own write loop and moqWriter.
 type MoQSession struct {
-	id            string
-	log           *slog.Logger
-	streamKey     string
-	session       *webtransport.Session
-	control       webtransport.Stream
-	controlReader *bufio.Reader // persistent buffered reader for control stream
-	relay         *Relay
-	statsProvider StatsProviderFunc
-	controlCh     <-chan []byte
-	controlMu     sync.Mutex
+	id                 string
+	log                *slog.Logger
+	streamKey          string
+	session            *webtransport.Session
+	control            webtransport.Stream
+	controlReader      *bufio.Reader // persistent buffered reader for control stream
+	relay              *Relay
+	statsProvider      StatsProviderFunc
+	controlBroadcaster *ControlBroadcaster
+	controlMu          sync.Mutex
 
 	mu             sync.RWMutex
 	subscriptions  map[string]*moqTrackSub // key: trackName
@@ -73,28 +73,28 @@ type MoQSession struct {
 
 // MoQSessionConfig holds the parameters for creating a new MoQ session.
 type MoQSessionConfig struct {
-	ID            string
-	Session       *webtransport.Session
-	Control       webtransport.Stream
-	StreamKey     string
-	Relay         *Relay
-	StatsProvider StatsProviderFunc
-	ControlCh     <-chan []byte
+	ID                 string
+	Session            *webtransport.Session
+	Control            webtransport.Stream
+	StreamKey          string
+	Relay              *Relay
+	StatsProvider      StatsProviderFunc
+	ControlBroadcaster *ControlBroadcaster
 }
 
 // NewMoQSession creates a new MoQ session for the given stream key.
 func NewMoQSession(cfg MoQSessionConfig) *MoQSession {
 	return &MoQSession{
-		id:            cfg.ID,
-		log:           slog.With("session", cfg.ID, "stream", cfg.StreamKey),
-		streamKey:     cfg.StreamKey,
-		session:       cfg.Session,
-		control:       cfg.Control,
-		controlReader: bufio.NewReader(cfg.Control),
-		relay:         cfg.Relay,
-		statsProvider: cfg.StatsProvider,
-		controlCh:     cfg.ControlCh,
-		subscriptions: make(map[string]*moqTrackSub),
+		id:                 cfg.ID,
+		log:                slog.With("session", cfg.ID, "stream", cfg.StreamKey),
+		streamKey:          cfg.StreamKey,
+		session:            cfg.Session,
+		control:            cfg.Control,
+		controlReader:      bufio.NewReader(cfg.Control),
+		relay:              cfg.Relay,
+		statsProvider:      cfg.StatsProvider,
+		controlBroadcaster: cfg.ControlBroadcaster,
+		subscriptions:      make(map[string]*moqTrackSub),
 	}
 }
 
@@ -280,7 +280,7 @@ func (m *MoQSession) handleSubscribe(ctx context.Context, sub moq.Subscribe) {
 
 // handleCatalogSubscribe builds and delivers the catalog, then sends SUBSCRIBE_OK.
 func (m *MoQSession) handleCatalogSubscribe(ctx context.Context, sub moq.Subscribe, alias uint64) {
-	catalogJSON, err := buildMoQCatalog(m.streamKey, m.relay, m.controlCh != nil)
+	catalogJSON, err := buildMoQCatalog(m.streamKey, m.relay, m.controlBroadcaster != nil)
 	if err != nil {
 		m.sendSubscribeError(sub.RequestID, 500, "catalog build failed")
 		return
@@ -598,7 +598,7 @@ func (m *MoQSession) writeCaptionLoop(ctx context.Context, sub *moqTrackSub) {
 			}
 
 			data := frame.Serialize()
-			n, err := sub.writer.WriteCaptionFrame(stream, data, tsMS)
+			n, err := sub.writer.WriteDataObject(stream, data, tsMS)
 			if err != nil {
 				stream.Close()
 				m.log.Debug("caption frame write failed", "error", err)
@@ -685,7 +685,7 @@ func (m *MoQSession) writeStatsLoop(ctx context.Context, sub *moqTrackSub) {
 				return
 			}
 
-			n, err := sub.writer.WriteCaptionFrame(stream, data, tsMS)
+			n, err := sub.writer.WriteDataObject(stream, data, tsMS)
 			if err != nil {
 				stream.Close()
 				m.log.Debug("stats write failed", "error", err)
@@ -702,21 +702,27 @@ func (m *MoQSession) writeStatsLoop(ctx context.Context, sub *moqTrackSub) {
 // handleControlSubscribe sets up the control track subscription and starts the write loop.
 // The control track delivers application-level JSON state updates (e.g., switcher control
 // room state) to connected browsers. It is only available when ControlCh is configured
-// in ServerConfig.
+// in ServerConfig. Each viewer gets its own channel from the ControlBroadcaster.
 func (m *MoQSession) handleControlSubscribe(ctx context.Context, sub moq.Subscribe, alias uint64) {
-	if m.controlCh == nil {
+	if m.controlBroadcaster == nil {
 		m.sendSubscribeError(sub.RequestID, 404, "control track not available")
 		return
 	}
 
 	subCtx, subCancel := context.WithCancel(ctx)
 
+	// Subscribe to the broadcaster to get a per-session channel.
+	ch := m.controlBroadcaster.Subscribe(m.id)
+
 	trackSub := &moqTrackSub{
 		requestID:  sub.RequestID,
 		trackAlias: alias,
 		trackName:  "control",
 		writer:     NewMoQWriter(alias, priorityControl),
-		cancel:     subCancel,
+		cancel: func() {
+			subCancel()
+			m.controlBroadcaster.Unsubscribe(m.id)
+		},
 	}
 
 	m.mu.Lock()
@@ -725,7 +731,7 @@ func (m *MoQSession) handleControlSubscribe(ctx context.Context, sub moq.Subscri
 
 	m.sendSubscribeOK(sub.RequestID, alias, moq.GroupOrderAscending, false, 0, 0)
 
-	go m.writeControlLoop(subCtx, trackSub, m.controlCh)
+	go m.writeControlLoop(subCtx, trackSub, ch)
 
 	m.log.Debug("control track subscribed",
 		"alias", alias,
@@ -763,7 +769,7 @@ func (m *MoQSession) writeControlLoop(ctx context.Context, sub *moqTrackSub, ch 
 				return
 			}
 
-			n, err := sub.writer.WriteCaptionFrame(stream, data, tsMS)
+			n, err := sub.writer.WriteDataObject(stream, data, tsMS)
 			if err != nil {
 				stream.Close()
 				m.log.Debug("control write failed", "error", err)

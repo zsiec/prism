@@ -147,10 +147,8 @@ type ServerConfig struct {
 	// ControlCh receives JSON-encoded control state. If set, a "control"
 	// track is advertised in the MoQ catalog and subscribers receive state
 	// updates as JSON objects. Each send produces one MoQ group.
-	//
-	// Note: this is a single Go channel, so only one MoQ subscriber will
-	// receive each message. For multi-viewer fan-out, the sender should
-	// provide per-session channels or a broadcast mechanism in a future phase.
+	// Messages are internally broadcast to all connected viewers via
+	// ControlBroadcaster.
 	ControlCh <-chan []byte
 }
 
@@ -170,6 +168,8 @@ type Server struct {
 
 	mu      sync.RWMutex
 	streams map[string]*streamResources
+
+	controlBroadcaster *ControlBroadcaster // nil if ControlCh not configured
 }
 
 // NewServer creates a distribution Server with the given configuration.
@@ -181,16 +181,23 @@ func NewServer(config ServerConfig) (*Server, error) {
 	if config.Addr == "" {
 		return nil, errors.New("distribution: Addr is required")
 	}
-	return &Server{
+	s := &Server{
 		config:  config,
 		streams: make(map[string]*streamResources),
-	}, nil
+	}
+	if config.ControlCh != nil {
+		s.controlBroadcaster = NewControlBroadcaster()
+	}
+	return s, nil
 }
 
 // RegisterStream creates a Relay for the given stream key and returns it.
 // If the stream already has a relay, the existing one is returned.
 // For new streams, OnStreamRegistered is called (if set) after releasing
-// the lock.
+// the lock. Concurrent calls with the same key are safe (only one creates
+// a relay), but the callback may observe transient inconsistency if a
+// concurrent UnregisterStream for the same key interleaves between the
+// lock release and the callback invocation.
 func (s *Server) RegisterStream(streamKey string) *Relay {
 	s.mu.Lock()
 	if sr, ok := s.streams[streamKey]; ok {
@@ -209,7 +216,9 @@ func (s *Server) RegisterStream(streamKey string) *Relay {
 
 // UnregisterStream removes the relay and pipeline for a stream key.
 // If the stream existed, OnStreamUnregistered is called (if set) after
-// releasing the lock.
+// releasing the lock. If a concurrent RegisterStream for the same key
+// races with this call, the callback may fire after a new relay has
+// already been registered.
 func (s *Server) UnregisterStream(streamKey string) {
 	s.mu.Lock()
 	_, existed := s.streams[streamKey]
@@ -335,6 +344,10 @@ func (s *Server) Start(ctx context.Context) error {
 		},
 	}
 
+	if s.controlBroadcaster != nil {
+		go s.controlBroadcaster.Run(ctx, s.config.ControlCh)
+	}
+
 	slog.Info("WebTransport server listening", "addr", s.config.Addr)
 
 	stop := context.AfterFunc(ctx, func() { s.wtSrv.Close() })
@@ -418,13 +431,13 @@ func (s *Server) setupMoQ(r *http.Request, session *webtransport.Session, contro
 	}
 
 	moqSession := NewMoQSession(MoQSessionConfig{
-		ID:            fmt.Sprintf("moq-%s-%s", streamKey, r.RemoteAddr),
-		Session:       session,
-		Control:       controlStream,
-		StreamKey:     streamKey,
-		Relay:         relay,
-		StatsProvider: s.GetPipeline,
-		ControlCh:     s.config.ControlCh,
+		ID:                 fmt.Sprintf("moq-%s-%s", streamKey, r.RemoteAddr),
+		Session:            session,
+		Control:            controlStream,
+		StreamKey:          streamKey,
+		Relay:              relay,
+		StatsProvider:      s.GetPipeline,
+		ControlBroadcaster: s.controlBroadcaster,
 	})
 
 	pathKey, err := moqSession.handleSetup()

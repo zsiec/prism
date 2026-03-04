@@ -351,7 +351,7 @@ func TestMoQWriterAudioFrame(t *testing.T) {
 	}
 }
 
-func TestMoQWriterCaptionFrame(t *testing.T) {
+func TestMoQWriterDataObject(t *testing.T) {
 	t.Parallel()
 	w := NewMoQWriter(10, 200)
 	var buf bytes.Buffer
@@ -363,9 +363,9 @@ func TestMoQWriterCaptionFrame(t *testing.T) {
 
 	captionData := []byte{0xCC, 0x02, 0x01, 0x02, 0x03}
 
-	n, err := w.WriteCaptionFrame(&buf, captionData, 3000)
+	n, err := w.WriteDataObject(&buf, captionData, 3000)
 	if err != nil {
-		t.Fatalf("WriteCaptionFrame failed: %v", err)
+		t.Fatalf("WriteDataObject failed: %v", err)
 	}
 
 	if n != int64(buf.Len()) {
@@ -479,12 +479,12 @@ func TestMoQWriterBytesWritten(t *testing.T) {
 	}
 
 	buf.Reset()
-	n, err = w.WriteCaptionFrame(&buf, []byte{0x01, 0x02, 0x03}, 200)
+	n, err = w.WriteDataObject(&buf, []byte{0x01, 0x02, 0x03}, 200)
 	if err != nil {
-		t.Fatalf("WriteCaptionFrame failed: %v", err)
+		t.Fatalf("WriteDataObject failed: %v", err)
 	}
 	if n != int64(buf.Len()) {
-		t.Errorf("WriteCaptionFrame: returned %d, buffer has %d", n, buf.Len())
+		t.Errorf("WriteDataObject: returned %d, buffer has %d", n, buf.Len())
 	}
 }
 

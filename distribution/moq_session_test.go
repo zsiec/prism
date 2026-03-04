@@ -644,6 +644,103 @@ func TestMoQSessionStats(t *testing.T) {
 	}
 }
 
+func TestMoQSessionHandleControlSubscribeNoBroadcaster(t *testing.T) {
+	t.Parallel()
+	relay := NewRelay()
+	responseBuf := &bytes.Buffer{}
+	controlStream := &mockControlStream{
+		Reader: &bytes.Buffer{},
+		Writer: responseBuf,
+	}
+
+	session := &MoQSession{
+		id:            "test-session",
+		streamKey:     "live",
+		control:       controlStream,
+		log:           slog.With("session", "test-session"),
+		relay:         relay,
+		subscriptions: make(map[string]*moqTrackSub),
+		// controlBroadcaster is nil
+	}
+
+	sub := moq.Subscribe{
+		RequestID:  10,
+		Namespace:  []string{"prism", "live"},
+		TrackName:  "control",
+		FilterType: moq.FilterNextGroupStart,
+	}
+
+	session.handleSubscribe(context.Background(), sub)
+
+	msgType, payload, err := moq.ReadControlMsg(responseBuf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msgType != moq.MsgSubscribeError {
+		t.Fatalf("response type = %#x, want SUBSCRIBE_ERROR", msgType)
+	}
+
+	reqID, off := readVarint(payload, 0)
+	errCode, _ := readVarint(payload, off)
+	if reqID != 10 {
+		t.Fatalf("requestID = %d, want 10", reqID)
+	}
+	if errCode != 404 {
+		t.Fatalf("errorCode = %d, want 404", errCode)
+	}
+}
+
+func TestMoQSessionHandleControlSubscribeWithBroadcaster(t *testing.T) {
+	t.Parallel()
+	relay := NewRelay()
+	responseBuf := &bytes.Buffer{}
+	controlStream := &mockControlStream{
+		Reader: &bytes.Buffer{},
+		Writer: responseBuf,
+	}
+
+	broadcaster := NewControlBroadcaster()
+	source := make(chan []byte, 10)
+	go broadcaster.Run(context.Background(), source)
+	defer close(source)
+
+	session := &MoQSession{
+		id:                 "test-session",
+		streamKey:          "live",
+		control:            controlStream,
+		log:                slog.With("session", "test-session"),
+		relay:              relay,
+		controlBroadcaster: broadcaster,
+		subscriptions:      make(map[string]*moqTrackSub),
+	}
+
+	sub := moq.Subscribe{
+		RequestID:  11,
+		Namespace:  []string{"prism", "live"},
+		TrackName:  "control",
+		FilterType: moq.FilterNextGroupStart,
+	}
+
+	session.handleSubscribe(context.Background(), sub)
+
+	// Should get SUBSCRIBE_OK
+	msgType, _, err := moq.ReadControlMsg(responseBuf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msgType != moq.MsgSubscribeOK {
+		t.Fatalf("response type = %#x, want SUBSCRIBE_OK", msgType)
+	}
+
+	// Verify subscription was created
+	session.mu.RLock()
+	controlSub := session.subscriptions["control"]
+	session.mu.RUnlock()
+	if controlSub == nil {
+		t.Fatal("control subscription not created")
+	}
+}
+
 // mockControlStream implements webtransport.Stream for test purposes.
 // It uses separate Reader/Writer to simulate the control stream.
 type mockControlStream struct {
