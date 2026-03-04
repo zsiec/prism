@@ -132,6 +132,24 @@ type ServerConfig struct {
 	SRTStop      SRTStopFunc
 	SRTList      SRTListFunc
 	ExtraRoutes  func(mux *http.ServeMux)
+
+	// OnStreamRegistered is called after a new stream relay is created
+	// and added to the server's stream map. It is NOT called when
+	// RegisterStream returns an existing relay for a duplicate key.
+	// The callback is invoked outside the server's mutex.
+	OnStreamRegistered func(key string, relay *Relay)
+
+	// OnStreamUnregistered is called after a stream is removed from
+	// the server's stream map. It is NOT called if the stream key
+	// was not present. The callback is invoked outside the server's mutex.
+	OnStreamUnregistered func(key string)
+
+	// ControlCh receives JSON-encoded control state. If set, a "control"
+	// track is advertised in the MoQ catalog and subscribers receive state
+	// updates as JSON objects. Each send produces one MoQ group.
+	// Messages are internally broadcast to all connected viewers via
+	// ControlBroadcaster.
+	ControlCh <-chan []byte
 }
 
 // streamResources bundles the relay and stats provider for a single live
@@ -150,6 +168,8 @@ type Server struct {
 
 	mu      sync.RWMutex
 	streams map[string]*streamResources
+
+	controlBroadcaster *ControlBroadcaster // nil if ControlCh not configured
 }
 
 // NewServer creates a distribution Server with the given configuration.
@@ -161,30 +181,53 @@ func NewServer(config ServerConfig) (*Server, error) {
 	if config.Addr == "" {
 		return nil, errors.New("distribution: Addr is required")
 	}
-	return &Server{
+	s := &Server{
 		config:  config,
 		streams: make(map[string]*streamResources),
-	}, nil
+	}
+	if config.ControlCh != nil {
+		s.controlBroadcaster = NewControlBroadcaster()
+	}
+	return s, nil
 }
 
 // RegisterStream creates a Relay for the given stream key and returns it.
 // If the stream already has a relay, the existing one is returned.
+// For new streams, OnStreamRegistered is called (if set) after releasing
+// the lock. Concurrent calls with the same key are safe (only one creates
+// a relay), but the callback may observe transient inconsistency if a
+// concurrent UnregisterStream for the same key interleaves between the
+// lock release and the callback invocation.
 func (s *Server) RegisterStream(streamKey string) *Relay {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if sr, ok := s.streams[streamKey]; ok {
+		s.mu.Unlock()
 		return sr.relay
 	}
 	r := NewRelay()
 	s.streams[streamKey] = &streamResources{relay: r}
+	s.mu.Unlock()
+
+	if s.config.OnStreamRegistered != nil {
+		s.config.OnStreamRegistered(streamKey, r)
+	}
 	return r
 }
 
 // UnregisterStream removes the relay and pipeline for a stream key.
+// If the stream existed, OnStreamUnregistered is called (if set) after
+// releasing the lock. If a concurrent RegisterStream for the same key
+// races with this call, the callback may fire after a new relay has
+// already been registered.
 func (s *Server) UnregisterStream(streamKey string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	_, existed := s.streams[streamKey]
 	delete(s.streams, streamKey)
+	s.mu.Unlock()
+
+	if existed && s.config.OnStreamUnregistered != nil {
+		s.config.OnStreamUnregistered(streamKey)
+	}
 }
 
 // SetPipeline associates a StatsProvider with a stream key. The stream
@@ -301,6 +344,10 @@ func (s *Server) Start(ctx context.Context) error {
 		},
 	}
 
+	if s.controlBroadcaster != nil {
+		go s.controlBroadcaster.Run(ctx, s.config.ControlCh)
+	}
+
 	slog.Info("WebTransport server listening", "addr", s.config.Addr)
 
 	stop := context.AfterFunc(ctx, func() { s.wtSrv.Close() })
@@ -384,12 +431,13 @@ func (s *Server) setupMoQ(r *http.Request, session *webtransport.Session, contro
 	}
 
 	moqSession := NewMoQSession(MoQSessionConfig{
-		ID:            fmt.Sprintf("moq-%s-%s", streamKey, r.RemoteAddr),
-		Session:       session,
-		Control:       controlStream,
-		StreamKey:     streamKey,
-		Relay:         relay,
-		StatsProvider: s.GetPipeline,
+		ID:                 fmt.Sprintf("moq-%s-%s", streamKey, r.RemoteAddr),
+		Session:            session,
+		Control:            controlStream,
+		StreamKey:          streamKey,
+		Relay:              relay,
+		StatsProvider:      s.GetPipeline,
+		ControlBroadcaster: s.controlBroadcaster,
 	})
 
 	pathKey, err := moqSession.handleSetup()

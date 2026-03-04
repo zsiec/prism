@@ -292,3 +292,120 @@ func TestNewServerValidation(t *testing.T) {
 		}
 	})
 }
+
+func TestStreamLifecycleCallbacks(t *testing.T) {
+	t.Parallel()
+
+	cert, err := certs.Generate(24 * 60 * 60 * 1e9)
+	if err != nil {
+		t.Fatalf("certs.Generate: %v", err)
+	}
+
+	t.Run("OnStreamRegistered fires on new stream", func(t *testing.T) {
+		t.Parallel()
+
+		var gotKey string
+		var gotRelay *Relay
+		srv, err := NewServer(ServerConfig{
+			Addr: ":0",
+			Cert: cert,
+			OnStreamRegistered: func(key string, relay *Relay) {
+				gotKey = key
+				gotRelay = relay
+			},
+		})
+		if err != nil {
+			t.Fatalf("NewServer: %v", err)
+		}
+
+		relay := srv.RegisterStream("cam1")
+		if gotKey != "cam1" {
+			t.Fatalf("callback key = %q, want %q", gotKey, "cam1")
+		}
+		if gotRelay != relay {
+			t.Fatal("callback relay does not match returned relay")
+		}
+	})
+
+	t.Run("OnStreamRegistered does NOT fire on duplicate", func(t *testing.T) {
+		t.Parallel()
+
+		callCount := 0
+		srv, err := NewServer(ServerConfig{
+			Addr: ":0",
+			Cert: cert,
+			OnStreamRegistered: func(key string, relay *Relay) {
+				callCount++
+			},
+		})
+		if err != nil {
+			t.Fatalf("NewServer: %v", err)
+		}
+
+		srv.RegisterStream("cam1")
+		srv.RegisterStream("cam1") // duplicate
+		if callCount != 1 {
+			t.Fatalf("callback called %d times, want 1", callCount)
+		}
+	})
+
+	t.Run("OnStreamUnregistered fires on removal", func(t *testing.T) {
+		t.Parallel()
+
+		var gotKey string
+		srv, err := NewServer(ServerConfig{
+			Addr: ":0",
+			Cert: cert,
+			OnStreamUnregistered: func(key string) {
+				gotKey = key
+			},
+		})
+		if err != nil {
+			t.Fatalf("NewServer: %v", err)
+		}
+
+		srv.RegisterStream("cam1")
+		srv.UnregisterStream("cam1")
+		if gotKey != "cam1" {
+			t.Fatalf("callback key = %q, want %q", gotKey, "cam1")
+		}
+	})
+
+	t.Run("OnStreamUnregistered does NOT fire if stream missing", func(t *testing.T) {
+		t.Parallel()
+
+		called := false
+		srv, err := NewServer(ServerConfig{
+			Addr: ":0",
+			Cert: cert,
+			OnStreamUnregistered: func(key string) {
+				called = true
+			},
+		})
+		if err != nil {
+			t.Fatalf("NewServer: %v", err)
+		}
+
+		srv.UnregisterStream("nonexistent")
+		if called {
+			t.Fatal("callback should not fire for nonexistent stream")
+		}
+	})
+
+	t.Run("nil callbacks do not panic", func(t *testing.T) {
+		t.Parallel()
+
+		srv, err := NewServer(ServerConfig{
+			Addr: ":0",
+			Cert: cert,
+			// No callbacks set — should not panic.
+		})
+		if err != nil {
+			t.Fatalf("NewServer: %v", err)
+		}
+
+		srv.RegisterStream("cam1")
+		srv.UnregisterStream("cam1")
+		// If we get here without panicking, the test passes.
+	})
+}

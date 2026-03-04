@@ -31,6 +31,7 @@ const (
 	priorityVideo    = 128
 	priorityAudio    = 128
 	priorityCaptions = 200
+	priorityControl  = 210
 	priorityStats    = 220
 )
 
@@ -55,9 +56,10 @@ type StreamFrameWriter interface {
 	// returning the total bytes written.
 	WriteAudioFrame(w io.Writer, data []byte, timestampMS uint32) (int64, error)
 
-	// WriteCaptionFrame writes a single caption frame (header + payload) to w,
-	// returning the total bytes written.
-	WriteCaptionFrame(w io.Writer, data []byte, timestampMS uint32) (int64, error)
+	// WriteDataObject writes a single data object (caption, stats JSON,
+	// control JSON, etc.) with header + payload to w, returning the total
+	// bytes written.
+	WriteDataObject(w io.Writer, data []byte, timestampMS uint32) (int64, error)
 
 	// StreamHeaderSize returns the byte size of the stream header written
 	// by WriteStreamHeader, used for accurate byte accounting.

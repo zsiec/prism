@@ -115,7 +115,7 @@ func (m *moqWriter) WriteAudioFrame(w io.Writer, data []byte, timestampMS uint32
 	return m.writeObject(w, exts, payload)
 }
 
-func (m *moqWriter) WriteCaptionFrame(w io.Writer, data []byte, timestampMS uint32) (int64, error) {
+func (m *moqWriter) WriteDataObject(w io.Writer, data []byte, timestampMS uint32) (int64, error) {
 	var exts []byte
 	exts = quicvarint.Append(exts, locExtCaptureTimestamp)
 	exts = quicvarint.Append(exts, uint64(timestampMS)*1000)

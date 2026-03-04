@@ -351,5 +351,14 @@ export class PrismRenderer {
 			this.lastDrawnFrame.close();
 			this.lastDrawnFrame = null;
 		}
+		// Reset timing state so the next start() begins fresh rather
+		// than pacing against stale PTS values from a prior session.
+		this.currentVideoPTS = -1;
+		this.currentAudioPTS = -1;
+		this.freeRunStart = -1;
+		this.freeRunBasePTS = -1;
+		this.lastAudioAdvanceTime = 0;
+		this.audioStallFreeRunStart = -1;
+		this.audioStallFreeRunBasePTS = -1;
 	}
 }
