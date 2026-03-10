@@ -14,8 +14,10 @@ Prism accepts MPEG-TS streams over SRT, demuxes H.264/H.265 video and AAC audio,
 - **SCTE-35** — Splice insert and time signal parsing
 - **SMPTE 12M timecode** — Extracted from pic_timing SEI
 - **GOP cache** — Late-joining viewers start from the most recent keyframe
-- **Multiview** — 9-stream composited grid with per-tile audio solo
+- **Multiview** — 9-stream composited grid with per-tile audio solo and WebGPU compositing
 - **Control track** — Application-level JSON state broadcast to all viewers via MoQ
+- **Stats track** — Per-viewer stream statistics (bitrate, FPS, codec info, viewer count) delivered as MoQ JSON objects
+- **Stream Inspector** — Real-time diagnostics UI with compact metrics strip and full dashboard overlay (video pipeline, A/V sync, GOP structure, SCTE-35 timeline, error counters)
 - **WebCodecs decoding** — Hardware-accelerated video/audio decode in the browser
 
 ## Quick Start
@@ -106,13 +108,13 @@ The library also exports `MoQTransport`, `MoQMultiviewTransport`, `MetricsStore`
 ## Architecture
 
 ```
-SRT socket ──> io.Pipe ──> MPEG-TS Demuxer ──> Pipeline ──> Relay ──> Viewers
-                               │                              │
-                          H.264/H.265                   GOP cache
-                          AAC (multi-track)             Fan-out
-                          CEA-608/708                   Pre-computed wire data
-                          SCTE-35
-                          SMPTE 12M timecode
+SRT socket ──> io.Pipe ──> MPEG-TS Demuxer ──> Pipeline ──> Relay ──> MoQ Sessions
+                               │                              │           │
+                          H.264/H.265                   GOP cache    Video track
+                          AAC (multi-track)             Fan-out      Audio tracks
+                          CEA-608/708                                Caption track
+                          SCTE-35                                   Stats track
+                          SMPTE 12M timecode                        Control track
 ```
 
 Single Go binary, vanilla TypeScript frontend:

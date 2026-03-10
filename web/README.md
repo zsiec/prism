@@ -53,23 +53,78 @@ See [`examples/standalone.html`](examples/standalone.html) for a complete workin
 
 ## Source Structure
 
+**Entry points:**
+
 | File | Purpose |
 |---|---|
 | `main.ts` | App entry point — routes to single-stream or multiview |
 | `lib.ts` | Library entry point — barrel export for `build:lib` |
+
+**Player and transport:**
+
+| File | Purpose |
+|---|---|
 | `player.ts` | `PrismPlayer` — orchestrates decoding, rendering, and transport for one stream |
+| `player-ui.ts` | Player UI chrome — creates canvas, audio elements, captions, and control bar |
 | `multiview.ts` | Multiview manager — 9-tile grid with per-tile audio solo |
 | `moq-transport.ts` | MoQ Transport client — WebTransport + MoQ control/data parsing |
 | `moq-multiview-transport.ts` | Multi-stream MoQ coordinator |
+| `moq-constants.ts` | MoQ protocol constants (message types, versions, parameter keys) |
+| `transport.ts` | Track info and server stats types (`ServerStats`, `ServerSCTE35Event`) |
+| `transport-utils.ts` | Connection utilities (`fetchServerInfo`, `connectWebTransport`) |
+| `stream-buffer.ts` | Buffered stream reader for exact-length reads from WebTransport |
+| `protocol.ts` | Wire protocol types and CEA-608/708 caption parsing |
+| `capabilities.ts` | Browser API capability checker (WebCodecs, WebTransport, SharedArrayBuffer) |
+| `multiview-types.ts` | Multiview data structures (`MuxStreamEntry`, `MuxStreamCallbacks`, `MuxViewerStats`) |
+
+**Video:**
+
+| File | Purpose |
+|---|---|
 | `video-decoder.ts` | WebCodecs video decoder with worker offload |
 | `video-decoder-worker.ts` | Web Worker for `VideoDecoder` |
+| `video-render-buffer.ts` | Ring-buffer backed video frame queue with timestamp-based lookup |
+| `renderer.ts` | Canvas 2D / WebGPU video renderer with A/V sync |
+| `webgpu-compositor.ts` | WebGPU-based compositor for multiview tile rendering |
+
+**Audio:**
+
+| File | Purpose |
+|---|---|
 | `audio-decoder.ts` | WebCodecs audio decoder with AudioWorklet output |
-| `renderer.ts` | Canvas 2D / WebGPU video renderer |
+| `audio-worklet.ts` | AudioWorklet processor for audio playback scheduling |
+| `audio-ring-buffer.ts` | Shared ring buffer for audio samples with state management |
+| `audio-utils.ts` | Audio utilities (dB conversion, level scaling) |
+| `audio-track-selector.ts` | Dropdown UI for selecting between multiple audio tracks |
+| `vu-meter.ts` | Single-stream VU meter visualization |
+| `multiview-vu.ts` | Multi-tile VU meter visualization for multiview |
+
+**Captions and signals:**
+
+| File | Purpose |
+|---|---|
 | `captions.ts` | CEA-608/708 caption overlay renderer |
+| `scte35-history.ts` | SCTE-35 ad insertion event tracking and history |
+
+**Metrics and diagnostics:**
+
+| File | Purpose |
+|---|---|
 | `metrics-store.ts` | Per-frame metrics collection and health scoring |
-| `hud.ts` | Heads-up display badges (codec, resolution, bitrate, etc.) |
-| `inspector.ts` | Stream inspector panel with real-time charts |
-| `protocol.ts` | Wire protocol types and caption parsing |
+| `stats.ts` | Real-time FPS and stats display on canvas |
+| `perf-overlay.ts` | Complete diagnostic snapshot aggregation |
+| `detail-panel.ts` | Sparklines and detailed metric panels |
+| `inspector.ts` | Stream inspector orchestrator — metrics strip + dashboard overlay |
+| `inspector-strip.ts` | Compact 44px metrics strip (FPS, bitrate, A/V sync, viewers) |
+| `inspector-dashboard.ts` | Full dashboard overlay with pipeline flow and 2×2 chart grid |
+| `inspector-charts.ts` | Canvas chart primitives (time series, gauges, GOP structure, SCTE-35 timeline) |
+
+**UI components:**
+
+| File | Purpose |
+|---|---|
+| `hud.ts` | Heads-up display badges (codec, resolution, bitrate, health status) |
+| `fullscreen-btn.ts` | Fullscreen toggle button for player control bar |
 
 ## Build Configuration
 
