@@ -316,6 +316,91 @@ func TestRelayAudioTrackCount(t *testing.T) {
 	}
 }
 
+func TestRelayBroadcastVideoNoCacheDeliversFrames(t *testing.T) {
+	t.Parallel()
+
+	r := NewRelay()
+	v1 := newMockViewer("v1")
+	v2 := newMockViewer("v2")
+
+	r.AddViewer(v1)
+	r.AddViewer(v2)
+
+	frame := &media.VideoFrame{
+		PTS:        1000,
+		IsKeyframe: true,
+		GroupID:    1,
+		WireData:   []byte{0x00, 0x01, 0x65, 0x00},
+	}
+	r.BroadcastVideoNoCache(frame)
+
+	if v1.videoCount() != 1 {
+		t.Errorf("v1 video count: got %d, want 1", v1.videoCount())
+	}
+	if v2.videoCount() != 1 {
+		t.Errorf("v2 video count: got %d, want 1", v2.videoCount())
+	}
+}
+
+func TestRelayBroadcastVideoNoCacheSkipsGOPCache(t *testing.T) {
+	t.Parallel()
+
+	r := NewRelay()
+
+	// Broadcast several frames via NoCache
+	for i := 0; i < 5; i++ {
+		r.BroadcastVideoNoCache(&media.VideoFrame{
+			PTS:        int64(i * 3000),
+			IsKeyframe: true,
+			GroupID:    uint32(i),
+			WireData:   []byte{0x00, 0x01, 0x65, byte(i)},
+		})
+	}
+
+	// Late-joining viewer should get NO frames from GOP replay
+	v := newMockViewer("late")
+	r.AddViewer(v)
+
+	if v.videoCount() != 0 {
+		t.Errorf("GOP replay from no-cache relay: got %d frames, want 0", v.videoCount())
+	}
+}
+
+func TestRelayBroadcastVideoNoCacheMixedWithCached(t *testing.T) {
+	t.Parallel()
+
+	r := NewRelay()
+
+	// Broadcast one frame via normal BroadcastVideo (populates GOP cache)
+	r.BroadcastVideo(&media.VideoFrame{
+		PTS:        1000,
+		IsKeyframe: true,
+		GroupID:    1,
+		NALUs:      [][]byte{{0x65, 0x00}},
+	})
+
+	// Broadcast via NoCache — should NOT add to or clear GOP cache
+	r.BroadcastVideoNoCache(&media.VideoFrame{
+		PTS:        2000,
+		IsKeyframe: true,
+		GroupID:    2,
+		WireData:   []byte{0x00, 0x01, 0x65, 0x01},
+	})
+
+	// Late-joining viewer should get only the cached frame (from BroadcastVideo)
+	v := newMockViewer("late")
+	r.AddViewer(v)
+
+	if v.videoCount() != 1 {
+		t.Errorf("GOP replay: got %d frames, want 1", v.videoCount())
+	}
+	v.mu.Lock()
+	if v.videos[0].PTS != 1000 {
+		t.Errorf("replayed frame PTS: got %d, want 1000", v.videos[0].PTS)
+	}
+	v.mu.Unlock()
+}
+
 func TestRelayAudioInfo(t *testing.T) {
 	t.Parallel()
 

@@ -213,6 +213,25 @@ func (r *Relay) BroadcastVideo(frame *media.VideoFrame) {
 	}
 }
 
+// BroadcastVideoNoCache sends a video frame to all connected viewers without
+// storing it in the GOP cache. Use this for streams where every frame is
+// independently decodable (e.g., raw YUV) and GOP caching provides no value.
+//
+// Because no frame data is retained after this call returns, the caller may
+// safely reuse the frame's WireData buffer on the next call. This eliminates
+// per-frame allocation for high-throughput streams like raw video monitors.
+//
+// Late-joining viewers on a no-cache relay will not receive a GOP replay;
+// they simply wait for the next frame (~33ms at 30fps).
+func (r *Relay) BroadcastVideoNoCache(frame *media.VideoFrame) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	for _, session := range r.sessions {
+		session.SendVideo(frame)
+	}
+}
+
 func (r *Relay) replayGOP(session Viewer) {
 	r.gopMu.RLock()
 	defer r.gopMu.RUnlock()

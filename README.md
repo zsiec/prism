@@ -178,6 +178,17 @@ When embedding Prism via the `distribution` package, `ServerConfig` exposes hook
 
 The `ControlBroadcaster` type handles per-viewer fan-out of control messages with non-blocking sends (slow viewers drop messages rather than blocking the source).
 
+### Relay Methods
+
+The `Relay` type provides two video broadcast methods:
+
+| Method | GOP Cache | Use Case |
+|---|---|---|
+| `BroadcastVideo(frame)` | Yes — late-joining viewers receive the cached GOP | H.264/H.265 streams with keyframes and delta frames |
+| `BroadcastVideoNoCache(frame)` | No — frame data is not retained after the call returns | Raw/keyframe-only streams (e.g., raw YUV monitors) where every frame is independently decodable |
+
+`BroadcastVideoNoCache` is designed for high-throughput streams where the caller wants to reuse frame buffers. Because no frame data is retained, the caller may safely overwrite the frame's `WireData` buffer after the call returns. Late-joining viewers on a no-cache relay simply wait for the next frame (~33ms at 30fps) instead of receiving a GOP replay.
+
 ## Development
 
 ```bash
