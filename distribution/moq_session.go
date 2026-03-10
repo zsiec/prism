@@ -51,6 +51,7 @@ type MoQSession struct {
 	relay              *Relay
 	statsProvider      StatsProviderFunc
 	controlBroadcaster *ControlBroadcaster
+	onDatagram         func(streamKey string, data []byte)
 	controlMu          sync.Mutex
 
 	mu             sync.RWMutex
@@ -80,6 +81,11 @@ type MoQSessionConfig struct {
 	Relay              *Relay
 	StatsProvider      StatsProviderFunc
 	ControlBroadcaster *ControlBroadcaster
+
+	// OnDatagram is called when a WebTransport datagram arrives from a viewer.
+	// The callback receives the viewer's stream key and the raw datagram bytes.
+	// Called from the session's datagram read goroutine — must not block.
+	OnDatagram func(streamKey string, data []byte)
 }
 
 // NewMoQSession creates a new MoQ session for the given stream key.
@@ -94,6 +100,7 @@ func NewMoQSession(cfg MoQSessionConfig) *MoQSession {
 		relay:              cfg.Relay,
 		statsProvider:      cfg.StatsProvider,
 		controlBroadcaster: cfg.ControlBroadcaster,
+		onDatagram:         cfg.OnDatagram,
 		subscriptions:      make(map[string]*moqTrackSub),
 	}
 }
@@ -163,6 +170,7 @@ func (m *MoQSession) Run(ctx context.Context) error {
 	defer cancel()
 
 	go m.readControlLoop(ctx)
+	go m.readDatagramLoop(ctx)
 
 	<-ctx.Done()
 
@@ -225,6 +233,25 @@ func (m *MoQSession) readControlLoop(ctx context.Context) {
 		default:
 			m.log.Debug("unknown message", "type", msgType)
 		}
+	}
+}
+
+// readDatagramLoop reads WebTransport datagrams and dispatches them to the
+// onDatagram callback. It exits when the context is cancelled, the callback
+// is nil, or the session is nil.
+func (m *MoQSession) readDatagramLoop(ctx context.Context) {
+	if m.onDatagram == nil || m.session == nil {
+		return
+	}
+	for {
+		data, err := m.session.ReceiveDatagram(ctx)
+		if err != nil {
+			if ctx.Err() == nil {
+				m.log.Debug("datagram read error", "error", err)
+			}
+			return
+		}
+		m.onDatagram(m.streamKey, data)
 	}
 }
 

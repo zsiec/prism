@@ -150,6 +150,11 @@ type ServerConfig struct {
 	// Messages are internally broadcast to all connected viewers via
 	// ControlBroadcaster.
 	ControlCh <-chan []byte
+
+	// OnDatagram is called when a WebTransport datagram arrives from a viewer.
+	// The callback receives the viewer's stream key and the raw datagram bytes.
+	// Called from the session's datagram read goroutine — must not block.
+	OnDatagram func(streamKey string, data []byte)
 }
 
 // streamResources bundles the relay and stats provider for a single live
@@ -438,6 +443,7 @@ func (s *Server) setupMoQ(r *http.Request, session *webtransport.Session, contro
 		Relay:              relay,
 		StatsProvider:      s.GetPipeline,
 		ControlBroadcaster: s.controlBroadcaster,
+		OnDatagram:         s.config.OnDatagram,
 	})
 
 	pathKey, err := moqSession.handleSetup()

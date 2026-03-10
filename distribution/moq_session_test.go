@@ -759,3 +759,58 @@ func (m *mockControlStream) SetDeadline(_ time.Time) error              { return
 func (m *mockControlStream) SetReadDeadline(_ time.Time) error          { return nil }
 func (m *mockControlStream) SetWriteDeadline(_ time.Time) error         { return nil }
 func (m *mockControlStream) StreamID() quic.StreamID                    { return 0 }
+
+func TestMoQSession_DatagramCallback(t *testing.T) {
+	t.Parallel()
+	cfg := MoQSessionConfig{
+		ID:        "test-dg",
+		StreamKey: "cam1",
+		OnDatagram: func(streamKey string, data []byte) {},
+	}
+	session := NewMoQSession(cfg)
+	if session == nil {
+		t.Fatal("expected non-nil session")
+	}
+	if session.onDatagram == nil {
+		t.Fatal("expected onDatagram to be set")
+	}
+}
+
+func TestMoQSession_ReadDatagramLoop_NilCallback(t *testing.T) {
+	t.Parallel()
+	cfg := MoQSessionConfig{
+		ID:        "test-nodg",
+		StreamKey: "cam1",
+	}
+	session := NewMoQSession(cfg)
+	if session.onDatagram != nil {
+		t.Fatal("expected onDatagram to be nil")
+	}
+}
+
+func TestMoQSession_ReadDatagramLoop_NilSession(t *testing.T) {
+	t.Parallel()
+	called := make(chan struct{})
+	cfg := MoQSessionConfig{
+		ID:        "test-dg-nosess",
+		StreamKey: "cam1",
+		OnDatagram: func(streamKey string, data []byte) {
+			close(called)
+		},
+	}
+	session := NewMoQSession(cfg)
+	// session.session is nil, readDatagramLoop should return immediately
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		session.readDatagramLoop(ctx)
+		close(done)
+	}()
+	select {
+	case <-done:
+		// expected: returned immediately because session is nil
+	case <-time.After(time.Second):
+		t.Fatal("readDatagramLoop did not return when session is nil")
+	}
+}
