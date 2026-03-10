@@ -763,8 +763,8 @@ func (m *mockControlStream) StreamID() quic.StreamID                    { return
 func TestMoQSession_DatagramCallback(t *testing.T) {
 	t.Parallel()
 	cfg := MoQSessionConfig{
-		ID:        "test-dg",
-		StreamKey: "cam1",
+		ID:         "test-dg",
+		StreamKey:  "cam1",
 		OnDatagram: func(streamKey string, data []byte) {},
 	}
 	session := NewMoQSession(cfg)
