@@ -174,6 +174,7 @@ When embedding Prism via the `distribution` package, `ServerConfig` exposes hook
 | `OnStreamRegistered` | `func(key string, relay *Relay)` | Called after a new stream relay is created |
 | `OnStreamUnregistered` | `func(key string)` | Called after a stream is removed |
 | `ControlCh` | `<-chan []byte` | JSON control state broadcast — each send is delivered to all viewers as a MoQ control track object |
+| `OnDatagram` | `func(streamKey string, data []byte)` | Called when a WebTransport datagram arrives from a viewer — must not block |
 
 The `ControlBroadcaster` type handles per-viewer fan-out of control messages with non-blocking sends (slow viewers drop messages rather than blocking the source).
 

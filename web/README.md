@@ -51,6 +51,41 @@ player.connect("demo");
 
 See [`examples/standalone.html`](examples/standalone.html) for a complete working example.
 
+### Callback Interfaces
+
+For custom players that use `MoQTransport` or `MoQMultiviewTransport` directly instead of `PrismPlayer`, these callback interfaces control frame delivery and lifecycle events.
+
+**`MoQTransportCallbacks`** — passed to `MoQTransport` constructor:
+
+| Callback | Signature | Description |
+|---|---|---|
+| `onTrackInfo` | `(tracks: TrackInfo[]) => void` | Catalog received — lists available media tracks |
+| `onVideoFrame` | `(data, isKeyframe, timestamp, groupID, description) => void` | Video frame arrived; `description` is non-null when codec config changes |
+| `onAudioFrame` | `(data, timestamp, groupID, trackIndex) => void` | Audio frame arrived with track index for multi-track audio |
+| `onCaptionFrame` | `(caption: CaptionData, timestamp) => void` | CEA-608/708 caption data |
+| `onServerStats` | `(stats: ServerStats) => void` | Per-stream statistics (bitrate, FPS, codec info, viewer count, SCTE-35 events) |
+| `onViewerStats` | `(stats: ServerViewerStats) => void` | *(optional)* Per-viewer delivery statistics |
+| `onClose` | `() => void` | Connection closed |
+| `onError` | `(err: string) => void` | Transport error |
+
+`MoQTransport` also exposes runtime methods for dynamic track control:
+
+- **`subscribeAudio(trackIndices)`** — Subscribe to specific audio tracks by index
+- **`subscribeAllAudio()`** — Subscribe to all available audio tracks
+- **`unsubscribeTrack(name, requestID)`** — Unsubscribe from a track
+- **`getDiagnostics()`** — Returns `ProtocolDiagnostics` with frame/byte/arrival counters
+
+**`MoQMultiviewCallbacks`** — passed to `MoQMultiviewTransport` constructor:
+
+| Callback | Signature | Description |
+|---|---|---|
+| `onSetup` | `() => void` | Called once before any streams, for one-time setup (AudioContext, compositor, etc.) |
+| `onStreamReady` | `(stream: MuxStreamEntry) => void` | Called per-stream as each transport becomes ready — no all-or-nothing barrier |
+| `onAllReady` | `() => void` | Called once after all streams complete setup |
+| `onMuxStats` | `(stats, viewerStats?) => void` | Aggregated stats from all streams, with optional per-viewer delivery stats |
+| `onClose` | `() => void` | Transport closed |
+| `onError` | `(err: string) => void` | Transport error |
+
 ## Source Structure
 
 **Entry points:**
