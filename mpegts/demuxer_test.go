@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"testing"
+	"time"
 )
 
 // buildTSPacket constructs a 188-byte TS packet with the given fields.
@@ -205,6 +206,33 @@ func TestDemuxer_ContextCancellation(t *testing.T) {
 	_, err := dmx.NextData()
 	if err != context.Canceled {
 		t.Errorf("expected context.Canceled, got %v", err)
+	}
+}
+
+func TestDemuxer_BlockingReaderContextCancellation(t *testing.T) {
+	t.Parallel()
+	// An io.Pipe with no writer blocks on Read forever.
+	// The context-aware reader wrapper should unblock when cancelled.
+	r, _ := io.Pipe()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	dmx := NewDemuxer(ctx, r)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := dmx.NextData()
+		done <- err
+	}()
+
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != context.Canceled {
+			t.Fatalf("expected context.Canceled, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("NextData did not return after context cancellation on blocking reader")
 	}
 }
 

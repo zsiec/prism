@@ -21,12 +21,14 @@ type Demuxer struct {
 	eofData       []*DemuxerData
 }
 
-// NewDemuxer creates a new MPEG-TS demuxer reading from r.
+// NewDemuxer creates a new MPEG-TS demuxer reading from r. The context
+// is checked between packet reads — when cancelled, the next read returns
+// the context error instead of blocking.
 func NewDemuxer(ctx context.Context, r io.Reader, opts ...func(*Demuxer)) *Demuxer {
 	pm := newProgramMap()
 	d := &Demuxer{
 		ctx:        ctx,
-		reader:     r,
+		reader:     &contextReader{ctx: ctx, r: r},
 		pktSize:    packetSize,
 		programMap: pm,
 		pool:       newPacketPool(pm),
@@ -138,6 +140,23 @@ func (d *Demuxer) drainPool() {
 		}
 		d.eofData = append(d.eofData, results...)
 	}
+}
+
+// contextReader wraps an io.Reader so that reads respect a context. When the
+// context is cancelled, the next Read call returns the context error immediately
+// instead of blocking on the underlying reader. This ensures that demuxer
+// shutdown is prompt even when the underlying reader (e.g., an io.Pipe) would
+// otherwise block indefinitely.
+type contextReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (cr *contextReader) Read(p []byte) (int, error) {
+	if err := cr.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return cr.r.Read(p)
 }
 
 func (d *Demuxer) processPackets(packets []*Packet) ([]*DemuxerData, error) {
