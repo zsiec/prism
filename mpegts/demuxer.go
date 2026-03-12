@@ -143,10 +143,10 @@ func (d *Demuxer) drainPool() {
 }
 
 // contextReader wraps an io.Reader so that reads respect a context. When the
-// context is cancelled, the next Read call returns the context error immediately
-// instead of blocking on the underlying reader. This ensures that demuxer
-// shutdown is prompt even when the underlying reader (e.g., an io.Pipe) would
-// otherwise block indefinitely.
+// context is cancelled, Read returns the context error even if the underlying
+// reader is blocked (e.g., an io.Pipe with no writer). A background goroutine
+// performs the actual read; on cancellation the goroutine may leak until the
+// underlying reader unblocks, which is acceptable during shutdown.
 type contextReader struct {
 	ctx context.Context
 	r   io.Reader
@@ -156,7 +156,24 @@ func (cr *contextReader) Read(p []byte) (int, error) {
 	if err := cr.ctx.Err(); err != nil {
 		return 0, err
 	}
-	return cr.r.Read(p)
+
+	type result struct {
+		n   int
+		err error
+	}
+
+	ch := make(chan result, 1)
+	go func() {
+		n, err := cr.r.Read(p)
+		ch <- result{n, err}
+	}()
+
+	select {
+	case res := <-ch:
+		return res.n, res.err
+	case <-cr.ctx.Done():
+		return 0, cr.ctx.Err()
+	}
 }
 
 func (d *Demuxer) processPackets(packets []*Packet) ([]*DemuxerData, error) {
