@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -12,10 +13,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	webtransport "github.com/quic-go/webtransport-go"
 	"github.com/zsiec/ccx"
 	"github.com/zsiec/prism/media"
 	"github.com/zsiec/prism/moq"
-	"github.com/zsiec/prism/webtransport"
 )
 
 // moqTrackSub holds state for a single track subscription within a MoQ session.
@@ -46,7 +47,7 @@ type MoQSession struct {
 	log                *slog.Logger
 	streamKey          string
 	session            *webtransport.Session
-	control            webtransport.Stream
+	control            io.ReadWriter
 	controlReader      *bufio.Reader // persistent buffered reader for control stream
 	relay              *Relay
 	statsProvider      StatsProviderFunc
@@ -76,7 +77,7 @@ type MoQSession struct {
 type MoQSessionConfig struct {
 	ID                 string
 	Session            *webtransport.Session
-	Control            webtransport.Stream
+	Control            io.ReadWriter
 	StreamKey          string
 	Relay              *Relay
 	StatsProvider      StatsProviderFunc
@@ -497,7 +498,7 @@ func (m *MoQSession) Stats() ViewerStats {
 // --- Write loops ---
 
 func (m *MoQSession) writeVideoLoop(ctx context.Context, sub *moqTrackSub) {
-	var currentStream webtransport.SendStream
+	var currentStream *webtransport.SendStream
 	var currentGroupID uint32
 
 	closeStream := func() {
@@ -553,7 +554,7 @@ func (m *MoQSession) writeVideoLoop(ctx context.Context, sub *moqTrackSub) {
 }
 
 func (m *MoQSession) writeAudioLoop(ctx context.Context, sub *moqTrackSub) {
-	var stream webtransport.SendStream
+	var stream *webtransport.SendStream
 	defer func() {
 		if stream != nil {
 			stream.Close()

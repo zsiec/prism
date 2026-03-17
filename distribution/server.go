@@ -13,9 +13,9 @@ import (
 
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
+	webtransport "github.com/quic-go/webtransport-go"
 	"github.com/zsiec/prism/certs"
 	"github.com/zsiec/prism/moq"
-	"github.com/zsiec/prism/webtransport"
 )
 
 // StatsProvider is implemented by Pipeline to supply stream statistics
@@ -327,20 +327,23 @@ func (s *Server) Start(ctx context.Context) error {
 	wtMux.HandleFunc("/moq", s.handleMoQ)
 	s.registerAPIRoutes(wtMux)
 
-	tlsConfig := &tls.Config{
+	tlsConfig := http3.ConfigureTLSConfig(&tls.Config{
 		Certificates: []tls.Certificate{s.config.Cert.TLSCert},
+	})
+
+	h3srv := &http3.Server{
+		Addr:      s.config.Addr,
+		Handler:   corsMiddleware(wtMux),
+		TLSConfig: tlsConfig,
+		QUICConfig: &quic.Config{
+			MaxIdleTimeout: 30 * time.Second,
+			Allow0RTT:      true,
+		},
 	}
+	webtransport.ConfigureHTTP3Server(h3srv)
 
 	s.wtSrv = &webtransport.Server{
-		H3: http3.Server{
-			Addr:      s.config.Addr,
-			Handler:   corsMiddleware(wtMux),
-			TLSConfig: tlsConfig,
-			QUICConfig: &quic.Config{
-				MaxIdleTimeout: 30 * time.Second,
-				Allow0RTT:      true,
-			},
-		},
+		H3: h3srv,
 		// SECURITY: CheckOrigin accepts all origins. This is intentional for
 		// development and local-network use. Production deployments behind a
 		// reverse proxy should enforce origin checks at the proxy layer.
@@ -403,7 +406,7 @@ func (s *Server) handleMoQ(w http.ResponseWriter, r *http.Request) {
 // upgradeMoQ upgrades the HTTP request to a WebTransport session and accepts
 // the bidirectional control stream. On failure it logs, closes the session,
 // and returns a non-nil error.
-func (s *Server) upgradeMoQ(w http.ResponseWriter, r *http.Request) (*webtransport.Session, webtransport.Stream, error) {
+func (s *Server) upgradeMoQ(w http.ResponseWriter, r *http.Request) (*webtransport.Session, *webtransport.Stream, error) {
 	session, err := s.wtSrv.Upgrade(w, r)
 	if err != nil {
 		slog.Error("webtransport upgrade failed (moq)", "error", err)
@@ -425,7 +428,7 @@ func (s *Server) upgradeMoQ(w http.ResponseWriter, r *http.Request) (*webtranspo
 // setupMoQ performs the MoQ handshake, resolves the stream key (from URL query
 // or PATH parameter), and returns the relay and session. On failure it logs,
 // closes the session, and returns a non-nil error.
-func (s *Server) setupMoQ(r *http.Request, session *webtransport.Session, controlStream webtransport.Stream) (string, *Relay, *MoQSession, error) {
+func (s *Server) setupMoQ(r *http.Request, session *webtransport.Session, controlStream *webtransport.Stream) (string, *Relay, *MoQSession, error) {
 	streamKey := r.URL.Query().Get("stream")
 
 	relay := s.GetRelay(streamKey)

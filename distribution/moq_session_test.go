@@ -8,12 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/quicvarint"
 	"github.com/zsiec/ccx"
 	"github.com/zsiec/prism/media"
 	"github.com/zsiec/prism/moq"
-	"github.com/zsiec/prism/webtransport"
 )
 
 // buildClientSetupPayload builds a CLIENT_SETUP payload for testing.
@@ -741,24 +739,14 @@ func TestMoQSessionHandleControlSubscribeWithBroadcaster(t *testing.T) {
 	}
 }
 
-// mockControlStream implements webtransport.Stream for test purposes.
-// It uses separate Reader/Writer to simulate the control stream.
+// mockControlStream implements io.ReadWriter for test purposes.
 type mockControlStream struct {
 	Reader *bytes.Buffer
 	Writer *bytes.Buffer
 }
 
-var _ webtransport.Stream = (*mockControlStream)(nil)
-
-func (m *mockControlStream) Read(p []byte) (int, error)                 { return m.Reader.Read(p) }
-func (m *mockControlStream) Write(p []byte) (int, error)                { return m.Writer.Write(p) }
-func (m *mockControlStream) Close() error                               { return nil }
-func (m *mockControlStream) CancelRead(_ webtransport.StreamErrorCode)  {}
-func (m *mockControlStream) CancelWrite(_ webtransport.StreamErrorCode) {}
-func (m *mockControlStream) SetDeadline(_ time.Time) error              { return nil }
-func (m *mockControlStream) SetReadDeadline(_ time.Time) error          { return nil }
-func (m *mockControlStream) SetWriteDeadline(_ time.Time) error         { return nil }
-func (m *mockControlStream) StreamID() quic.StreamID                    { return 0 }
+func (m *mockControlStream) Read(p []byte) (int, error)  { return m.Reader.Read(p) }
+func (m *mockControlStream) Write(p []byte) (int, error) { return m.Writer.Write(p) }
 
 func TestMoQSession_DatagramCallback(t *testing.T) {
 	t.Parallel()
