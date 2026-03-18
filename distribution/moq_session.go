@@ -52,8 +52,9 @@ type MoQSession struct {
 	relay              *Relay
 	statsProvider      StatsProviderFunc
 	controlBroadcaster *ControlBroadcaster
-	onDatagram         func(streamKey string, data []byte)
-	controlMu          sync.Mutex
+	onDatagram            func(streamKey string, data []byte)
+	onBidirectionalStream func(streamKey string, stream io.ReadWriteCloser)
+	controlMu             sync.Mutex
 
 	mu             sync.RWMutex
 	subscriptions  map[string]*moqTrackSub // key: trackName
@@ -87,6 +88,11 @@ type MoQSessionConfig struct {
 	// The callback receives the viewer's stream key and the raw datagram bytes.
 	// Called from the session's datagram read goroutine — must not block.
 	OnDatagram func(streamKey string, data []byte)
+
+	// OnBidirectionalStream is called when a viewer opens a new bidirectional
+	// WebTransport stream. The callback receives the stream key and the stream.
+	// It runs in its own goroutine per stream and should return when done.
+	OnBidirectionalStream func(streamKey string, stream io.ReadWriteCloser)
 }
 
 // NewMoQSession creates a new MoQ session for the given stream key.
@@ -101,8 +107,9 @@ func NewMoQSession(cfg MoQSessionConfig) *MoQSession {
 		relay:              cfg.Relay,
 		statsProvider:      cfg.StatsProvider,
 		controlBroadcaster: cfg.ControlBroadcaster,
-		onDatagram:         cfg.OnDatagram,
-		subscriptions:      make(map[string]*moqTrackSub),
+		onDatagram:            cfg.OnDatagram,
+		onBidirectionalStream: cfg.OnBidirectionalStream,
+		subscriptions:         make(map[string]*moqTrackSub),
 	}
 }
 
@@ -172,6 +179,7 @@ func (m *MoQSession) Run(ctx context.Context) error {
 
 	go m.readControlLoop(ctx)
 	go m.readDatagramLoop(ctx)
+	go m.acceptBidirectionalStreams(ctx)
 
 	<-ctx.Done()
 
@@ -253,6 +261,25 @@ func (m *MoQSession) readDatagramLoop(ctx context.Context) {
 			return
 		}
 		m.onDatagram(m.streamKey, data)
+	}
+}
+
+// acceptBidirectionalStreams accepts additional bidirectional streams from the
+// WebTransport session (beyond the initial MoQ control stream) and dispatches
+// each to the onBidirectionalStream callback in its own goroutine.
+func (m *MoQSession) acceptBidirectionalStreams(ctx context.Context) {
+	if m.onBidirectionalStream == nil || m.session == nil {
+		return
+	}
+	for {
+		stream, err := m.session.AcceptStream(ctx)
+		if err != nil {
+			if ctx.Err() == nil {
+				m.log.Debug("bidi stream accept error", "error", err)
+			}
+			return
+		}
+		go m.onBidirectionalStream(m.streamKey, stream)
 	}
 }
 
