@@ -86,6 +86,60 @@ func BuildAVCDecoderConfig(sps, pps []byte) []byte {
 	return buf
 }
 
+// BuildAV1DecoderConfig builds an AV1CodecConfigurationRecord
+// (https://aomediacodec.github.io/av1-isobmff/#av1codecconfigurationrecord)
+// from a raw Sequence Header OBU (including OBU header bytes).
+// The sequence header OBU is appended as configOBUs.
+// Returns nil if the input is nil, too short, or fails to parse.
+func BuildAV1DecoderConfig(seqHeaderOBU []byte) []byte {
+	if len(seqHeaderOBU) < 2 {
+		return nil
+	}
+
+	hdr, err := demux.ParseAV1SequenceHeader(seqHeaderOBU)
+	if err != nil {
+		return nil
+	}
+
+	buf := make([]byte, 0, 4+len(seqHeaderOBU))
+
+	// Byte 0: marker(1)=1 | version(7)=1
+	buf = append(buf, 0x81)
+
+	// Byte 1: seq_profile(3) | seq_level_idx_0(5)
+	buf = append(buf, byte(hdr.SeqProfile&0x07)<<5|byte(hdr.SeqLevelIdx&0x1F))
+
+	// Byte 2: seq_tier_0(1) | high_bitdepth(1) | twelve_bit(1) | monochrome(1) |
+	//         chroma_subsampling_x(1) | chroma_subsampling_y(1) | chroma_sample_position(2)=0
+	var highBitDepth, twelveBit byte
+	if hdr.BitDepth >= 10 {
+		highBitDepth = 1
+	}
+	if hdr.BitDepth == 12 {
+		twelveBit = 1
+	}
+	var mono byte
+	if hdr.Monochrome {
+		mono = 1
+	}
+	b2 := byte(hdr.SeqTier&0x01)<<7 |
+		highBitDepth<<6 |
+		twelveBit<<5 |
+		mono<<4 |
+		byte(hdr.ChromaSubsamplingX&0x01)<<3 |
+		byte(hdr.ChromaSubsamplingY&0x01)<<2
+	// chroma_sample_position (2 bits) = 0
+	buf = append(buf, b2)
+
+	// Byte 3: reserved(3)=0 | initial_presentation_delay_present(1)=0 | reserved(4)=0
+	buf = append(buf, 0x00)
+
+	// configOBUs: the sequence header OBU itself
+	buf = append(buf, seqHeaderOBU...)
+
+	return buf
+}
+
 // BuildHEVCDecoderConfig builds an HEVCDecoderConfigurationRecord
 // (ISO 14496-15 §8.3.3.1.2) from raw VPS, SPS, and PPS NAL data
 // (without start codes). The SPS must include the 2-byte NAL header.
