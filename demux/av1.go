@@ -7,15 +7,10 @@ import (
 
 // AV1 OBU type constants as defined in AV1 spec §6.2.2.
 const (
-	OBUSequenceHeader       = 1
-	OBUTemporalDelimiter    = 2
-	OBUFrameHeader          = 3
-	OBUTileGroup            = 4
-	OBUMetadata             = 5
-	OBUFrame                = 6
-	OBURedundantFrameHeader = 7
-	OBUTileList             = 8
-	OBUPadding              = 15
+	OBUSequenceHeader    = 1
+	OBUTemporalDelimiter = 2
+	OBUFrameHeader       = 3
+	OBUFrame             = 6
 )
 
 // AV1 frame type constants as defined in AV1 spec §6.8.2.
@@ -50,7 +45,7 @@ type AV1SequenceHeader struct {
 // CodecString returns the RFC 6381 codec parameter string for AV1.
 // Format: "av01.P.LLT.DD" where P=profile, LL=zero-padded level,
 // T=tier(M/H), DD=zero-padded bit depth.
-func (s *AV1SequenceHeader) CodecString() string {
+func (s AV1SequenceHeader) CodecString() string {
 	tier := "M"
 	if s.SeqTier == 1 {
 		tier = "H"
@@ -472,14 +467,8 @@ func IsAV1Keyframe(temporalUnit []byte) bool {
 			// If show_existing_frame==1, this is not a new frame.
 			// If show_existing_frame==0, next 2 bits are frame_type.
 			payload := temporalUnit[payloadStart:]
-			if len(payload) < 1 {
-				return false
-			}
 			showExisting := (payload[0] >> 7) & 1
 			if showExisting == 1 {
-				return false
-			}
-			if len(payload) < 1 {
 				return false
 			}
 			frameType := (payload[0] >> 5) & 0x03
