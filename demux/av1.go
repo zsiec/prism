@@ -391,7 +391,7 @@ func parseColorConfig(br *av1BitReader, hdr *AV1SequenceHeader) {
 		transferCharacteristics = br.readBits(8)
 		matrixCoefficients = br.readBits(8)
 	} else {
-		colorPrimaries = 2        // CP_UNSPECIFIED
+		colorPrimaries = 2          // CP_UNSPECIFIED
 		transferCharacteristics = 2 // TC_UNSPECIFIED
 		matrixCoefficients = 2      // MC_UNSPECIFIED
 	}

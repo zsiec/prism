@@ -98,7 +98,7 @@ func main() {
 		SRTStop: func(streamKey string) error {
 			return a.srtCaller.Stop(streamKey)
 		},
-		SRTList:      a.listSRTPulls,
+		SRTList: a.listSRTPulls,
 		DASHPull: func(url, streamKey, videoRepID, audioRepID string) error {
 			return a.dashPuller.Pull(ctx, dashingest.PullRequest{
 				URL:        url,
@@ -110,7 +110,7 @@ func main() {
 		DASHStop: func(streamKey string) error {
 			return a.dashPuller.Stop(streamKey)
 		},
-		DASHList: a.listDASHPulls,
+		DASHList:     a.listDASHPulls,
 		StreamLister: a.listStreams,
 		IngestLookup: a.lookupIngest,
 	})

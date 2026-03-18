@@ -427,10 +427,10 @@ func TestParseOBUHeader(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:       "extension flag",
-			data:       []byte{0x0e, 0x40, 0x0b, 0x00, 0x00},
-			wantType:   OBUSequenceHeader,
-			wantHasExt: true,
+			name:        "extension flag",
+			data:        []byte{0x0e, 0x40, 0x0b, 0x00, 0x00},
+			wantType:    OBUSequenceHeader,
+			wantHasExt:  true,
 			wantHasSize: true,
 		},
 	}
@@ -601,7 +601,7 @@ func TestReducedStillPictureHeader(t *testing.T) {
 
 	// Wrap in OBU header: type=1, has_size=1
 	obu := make([]byte, 0, 2+len(payload))
-	obu = append(obu, 0x0a)              // OBU header: type=1, has_size=1
+	obu = append(obu, 0x0a)               // OBU header: type=1, has_size=1
 	obu = append(obu, byte(len(payload))) // LEB128 size
 	obu = append(obu, payload...)
 
@@ -732,41 +732,41 @@ func TestParseSequenceHeaderWithDecoderModelInfo(t *testing.T) {
 		}
 	}
 
-	appendBits(0, 3)  // seq_profile = 0
-	appendBits(0, 1)  // still_picture = 0
-	appendBits(0, 1)  // reduced_still_picture_header = 0
-	appendBits(1, 1)  // timing_info_present_flag = 1
-	appendBits(1, 32) // num_units_in_display_tick = 1
+	appendBits(0, 3)   // seq_profile = 0
+	appendBits(0, 1)   // still_picture = 0
+	appendBits(0, 1)   // reduced_still_picture_header = 0
+	appendBits(1, 1)   // timing_info_present_flag = 1
+	appendBits(1, 32)  // num_units_in_display_tick = 1
 	appendBits(30, 32) // time_scale = 30
-	appendBits(0, 1)  // equal_picture_interval = 0
-	appendBits(1, 1)  // decoder_model_info_present_flag = 1
-	appendBits(4, 5)  // buffer_delay_length_minus_1 = 4
-	appendBits(1, 32) // num_units_in_decoding_tick = 1
-	appendBits(0, 5)  // buffer_removal_time_length_minus_1 = 0
-	appendBits(0, 5)  // frame_presentation_time_length_minus_1 = 0
-	appendBits(0, 1)  // initial_display_delay_present_flag = 0
-	appendBits(0, 5)  // operating_points_cnt_minus_1 = 0
-	appendBits(0, 12) // operating_point_idc[0] = 0
-	appendBits(8, 5)  // seq_level_idx[0] = 8
-	appendBits(0, 1)  // seq_tier[0] = 0 (read because level > 7)
-	appendBits(1, 1)  // decoder_model_present_for_this_op[0] = 1
-	appendBits(0, 5)  // decoder_buffer_delay[0] = 0 (5 bits)
-	appendBits(0, 5)  // encoder_buffer_delay[0] = 0 (5 bits)
-	appendBits(0, 1)  // low_delay_mode_flag[0] = 0
-	appendBits(3, 4)  // frame_width_bits_minus_1 = 3
-	appendBits(3, 4)  // frame_height_bits_minus_1 = 3
-	appendBits(15, 4) // max_frame_width_minus_1 = 15 (width=16)
-	appendBits(15, 4) // max_frame_height_minus_1 = 15 (height=16)
-	appendBits(0, 1)  // frame_id_numbers_present_flag = 0
-	appendBits(0, 1)  // use_128x128_superblock = 0
-	appendBits(0, 1)  // enable_filter_intra = 0
-	appendBits(0, 1)  // enable_intra_edge_filter = 0
-	appendBits(0, 1)  // enable_interintra_compound = 0
-	appendBits(0, 1)  // enable_masked_compound = 0
-	appendBits(0, 1)  // enable_warped_motion = 0
-	appendBits(0, 1)  // enable_dual_filter = 0
-	appendBits(0, 1)  // enable_order_hint = 0
-	appendBits(1, 1)  // seq_choose_screen_content_tools = 1 (SELECT)
+	appendBits(0, 1)   // equal_picture_interval = 0
+	appendBits(1, 1)   // decoder_model_info_present_flag = 1
+	appendBits(4, 5)   // buffer_delay_length_minus_1 = 4
+	appendBits(1, 32)  // num_units_in_decoding_tick = 1
+	appendBits(0, 5)   // buffer_removal_time_length_minus_1 = 0
+	appendBits(0, 5)   // frame_presentation_time_length_minus_1 = 0
+	appendBits(0, 1)   // initial_display_delay_present_flag = 0
+	appendBits(0, 5)   // operating_points_cnt_minus_1 = 0
+	appendBits(0, 12)  // operating_point_idc[0] = 0
+	appendBits(8, 5)   // seq_level_idx[0] = 8
+	appendBits(0, 1)   // seq_tier[0] = 0 (read because level > 7)
+	appendBits(1, 1)   // decoder_model_present_for_this_op[0] = 1
+	appendBits(0, 5)   // decoder_buffer_delay[0] = 0 (5 bits)
+	appendBits(0, 5)   // encoder_buffer_delay[0] = 0 (5 bits)
+	appendBits(0, 1)   // low_delay_mode_flag[0] = 0
+	appendBits(3, 4)   // frame_width_bits_minus_1 = 3
+	appendBits(3, 4)   // frame_height_bits_minus_1 = 3
+	appendBits(15, 4)  // max_frame_width_minus_1 = 15 (width=16)
+	appendBits(15, 4)  // max_frame_height_minus_1 = 15 (height=16)
+	appendBits(0, 1)   // frame_id_numbers_present_flag = 0
+	appendBits(0, 1)   // use_128x128_superblock = 0
+	appendBits(0, 1)   // enable_filter_intra = 0
+	appendBits(0, 1)   // enable_intra_edge_filter = 0
+	appendBits(0, 1)   // enable_interintra_compound = 0
+	appendBits(0, 1)   // enable_masked_compound = 0
+	appendBits(0, 1)   // enable_warped_motion = 0
+	appendBits(0, 1)   // enable_dual_filter = 0
+	appendBits(0, 1)   // enable_order_hint = 0
+	appendBits(1, 1)   // seq_choose_screen_content_tools = 1 (SELECT)
 	// seqForceScreenContentTools = 2 (SELECT), which is > 0
 	appendBits(1, 1) // seq_choose_integer_mv = 1 (SELECT)
 	appendBits(0, 1) // enable_superres = 0
@@ -789,7 +789,7 @@ func TestParseSequenceHeaderWithDecoderModelInfo(t *testing.T) {
 
 	// Wrap in OBU header
 	obu := make([]byte, 0, 2+len(payload))
-	obu = append(obu, 0x0a)              // OBU header: type=1, has_size=1
+	obu = append(obu, 0x0a)               // OBU header: type=1, has_size=1
 	obu = append(obu, byte(len(payload))) // LEB128 size
 	obu = append(obu, payload...)
 

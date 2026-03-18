@@ -99,9 +99,9 @@ func (p *dashPipeline) processAudioSamples(samples []mediaSample) {
 // and REST API.
 func (p *dashPipeline) StreamSnapshot() distribution.StreamSnapshot {
 	return distribution.StreamSnapshot{
-		Timestamp:   time.Now().UnixMilli(),
-		UptimeMs:    time.Since(p.startTime).Milliseconds(),
-		Protocol:    "DASH",
+		Timestamp: time.Now().UnixMilli(),
+		UptimeMs:  time.Since(p.startTime).Milliseconds(),
+		Protocol:  "DASH",
 		Video: distribution.VideoStats{
 			Codec:       "AV1",
 			TotalFrames: p.videoForwarded.Load(),
