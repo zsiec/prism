@@ -630,6 +630,194 @@ func TestReducedStillPictureHeader(t *testing.T) {
 	}
 }
 
+func TestParseSequenceHeaderWithDecoderModelInfo(t *testing.T) {
+	t.Parallel()
+
+	// Hand-craft a sequence header payload with decoder_model_info and
+	// operating_parameters_info to exercise the code path where
+	// decoder_model_present_for_this_op=1 requires reading additional fields.
+	//
+	// Profile 0, still_picture=0, reduced_still_picture_header=0
+	// timing_info_present=1, num_units_in_display_tick=1(32b), time_scale=30(32b)
+	// equal_picture_interval=0
+	// decoder_model_info_present_flag=1
+	//   buffer_delay_length_minus_1=4 (5b, so delays are 5 bits each)
+	//   num_units_in_decoding_tick=1 (32b)
+	//   buffer_removal_time_length_minus_1=0 (5b)
+	//   frame_presentation_time_length_minus_1=0 (5b)
+	// initial_display_delay_present_flag=0
+	// operating_points_cnt_minus_1=0 (5b = 00000, so 1 operating point)
+	//   operating_point_idc[0]=0 (12b)
+	//   seq_level_idx[0]=8 (5b=01000), tier not read (level<=7 check: 8>7 so tier read)
+	//   seq_tier[0]=0 (1b)
+	//   decoder_model_present_for_this_op[0]=1 (1b)
+	//     decoder_buffer_delay[0]=0 (5b, since buffer_delay_length_minus_1=4)
+	//     encoder_buffer_delay[0]=0 (5b)
+	//     low_delay_mode_flag[0]=0 (1b)
+	// frame_width_bits_minus_1=3 (4b=0011), frame_height_bits_minus_1=3 (4b=0011)
+	// max_frame_width_minus_1=15 (4b=1111), max_frame_height_minus_1=15 (4b=1111)
+	// frame_id_numbers_present=0
+	// use_128x128_superblock=0, enable_filter_intra=0, enable_intra_edge_filter=0
+	// enable_interintra_compound=0, enable_masked_compound=0, enable_warped_motion=0
+	// enable_dual_filter=0, enable_order_hint=0
+	// seq_choose_screen_content_tools=1
+	// enable_superres=0, enable_cdef=0, enable_restoration=0
+	// color_config: high_bitdepth=0, mono_chrome=0, color_description_present=0
+	// color_range=0, chroma_sample_position=00, separate_uv_delta_q=0
+
+	// Bit-by-bit layout:
+	// [0-2]   seq_profile: 000
+	// [3]     still_picture: 0
+	// [4]     reduced_still_picture_header: 0
+	// [5]     timing_info_present_flag: 1
+	// [6-37]  num_units_in_display_tick: 00000000 00000000 00000000 00000001
+	// [38-69] time_scale: 00000000 00000000 00000000 00011110
+	// [70]    equal_picture_interval: 0
+	// [71]    decoder_model_info_present_flag: 1
+	// [72-76] buffer_delay_length_minus_1: 00100 (=4, so delays are 5 bits)
+	// [77-108] num_units_in_decoding_tick: 00000000 00000000 00000000 00000001
+	// [109-113] buffer_removal_time_length_minus_1: 00000
+	// [114-118] frame_presentation_time_length_minus_1: 00000
+	// [119]   initial_display_delay_present_flag: 0
+	// [120-124] operating_points_cnt_minus_1: 00000
+	// [125-136] operating_point_idc[0]: 000000000000
+	// [137-141] seq_level_idx[0]: 01000 (=8)
+	// [142]   seq_tier[0]: 0 (level>7 so tier is read)
+	// [143]   decoder_model_present_for_this_op[0]: 1
+	// [144-148] decoder_buffer_delay[0]: 00000
+	// [149-153] encoder_buffer_delay[0]: 00000
+	// [154]   low_delay_mode_flag[0]: 0
+	// [155-158] frame_width_bits_minus_1: 0011
+	// [159-162] frame_height_bits_minus_1: 0011
+	// [163-166] max_frame_width_minus_1: 1111
+	// [167-170] max_frame_height_minus_1: 1111
+	// [171]   frame_id_numbers_present_flag: 0
+	// [172]   use_128x128_superblock: 0
+	// [173]   enable_filter_intra: 0
+	// [174]   enable_intra_edge_filter: 0
+	// [175]   enable_interintra_compound: 0
+	// [176]   enable_masked_compound: 0
+	// [177]   enable_warped_motion: 0
+	// [178]   enable_dual_filter: 0
+	// [179]   enable_order_hint: 0
+	// [180]   seq_choose_screen_content_tools: 1
+	// [181]   enable_superres: 0
+	// [182]   enable_cdef: 0
+	// [183]   enable_restoration: 0
+	// [184]   high_bitdepth: 0
+	// [185]   mono_chrome: 0
+	// [186]   color_description_present_flag: 0
+	// [187]   color_range: 0
+	// [188-189] chroma_sample_position: 00
+	// [190]   separate_uv_delta_q: 0
+
+	// Convert bit positions to bytes:
+	// byte 0  [0-7]:   00000 1 00 = 0x04
+	// byte 1  [8-15]:  00000000
+	// byte 2  [16-23]: 00000000
+	// byte 3  [24-31]: 00000000
+	// byte 4  [32-39]: 00000001
+	// byte 5  [40-47]: 00000000
+	// byte 6  [48-55]: 00000000
+	// byte 7  [56-63]: 00000000
+	// byte 8  [64-71]: 00011110 = 0x1E (bits 64-69 = time_scale last, 70=equal_pic=0, 71=dmi=1)
+	//   Wait, let me redo this more carefully.
+
+	// Let me just build it with a helper to be precise.
+	bits := []uint{} // each element is 0 or 1
+
+	appendBits := func(val uint, n int) {
+		for i := n - 1; i >= 0; i-- {
+			bits = append(bits, (val>>uint(i))&1)
+		}
+	}
+
+	appendBits(0, 3)  // seq_profile = 0
+	appendBits(0, 1)  // still_picture = 0
+	appendBits(0, 1)  // reduced_still_picture_header = 0
+	appendBits(1, 1)  // timing_info_present_flag = 1
+	appendBits(1, 32) // num_units_in_display_tick = 1
+	appendBits(30, 32) // time_scale = 30
+	appendBits(0, 1)  // equal_picture_interval = 0
+	appendBits(1, 1)  // decoder_model_info_present_flag = 1
+	appendBits(4, 5)  // buffer_delay_length_minus_1 = 4
+	appendBits(1, 32) // num_units_in_decoding_tick = 1
+	appendBits(0, 5)  // buffer_removal_time_length_minus_1 = 0
+	appendBits(0, 5)  // frame_presentation_time_length_minus_1 = 0
+	appendBits(0, 1)  // initial_display_delay_present_flag = 0
+	appendBits(0, 5)  // operating_points_cnt_minus_1 = 0
+	appendBits(0, 12) // operating_point_idc[0] = 0
+	appendBits(8, 5)  // seq_level_idx[0] = 8
+	appendBits(0, 1)  // seq_tier[0] = 0 (read because level > 7)
+	appendBits(1, 1)  // decoder_model_present_for_this_op[0] = 1
+	appendBits(0, 5)  // decoder_buffer_delay[0] = 0 (5 bits)
+	appendBits(0, 5)  // encoder_buffer_delay[0] = 0 (5 bits)
+	appendBits(0, 1)  // low_delay_mode_flag[0] = 0
+	appendBits(3, 4)  // frame_width_bits_minus_1 = 3
+	appendBits(3, 4)  // frame_height_bits_minus_1 = 3
+	appendBits(15, 4) // max_frame_width_minus_1 = 15 (width=16)
+	appendBits(15, 4) // max_frame_height_minus_1 = 15 (height=16)
+	appendBits(0, 1)  // frame_id_numbers_present_flag = 0
+	appendBits(0, 1)  // use_128x128_superblock = 0
+	appendBits(0, 1)  // enable_filter_intra = 0
+	appendBits(0, 1)  // enable_intra_edge_filter = 0
+	appendBits(0, 1)  // enable_interintra_compound = 0
+	appendBits(0, 1)  // enable_masked_compound = 0
+	appendBits(0, 1)  // enable_warped_motion = 0
+	appendBits(0, 1)  // enable_dual_filter = 0
+	appendBits(0, 1)  // enable_order_hint = 0
+	appendBits(1, 1)  // seq_choose_screen_content_tools = 1 (SELECT)
+	// seqForceScreenContentTools = 2 (SELECT), which is > 0
+	appendBits(1, 1) // seq_choose_integer_mv = 1 (SELECT)
+	appendBits(0, 1) // enable_superres = 0
+	appendBits(0, 1) // enable_cdef = 0
+	appendBits(0, 1) // enable_restoration = 0
+	appendBits(0, 1) // high_bitdepth = 0 → 8-bit
+	appendBits(0, 1) // mono_chrome = 0
+	appendBits(0, 1) // color_description_present_flag = 0
+	appendBits(0, 1) // color_range = 0
+	appendBits(0, 2) // chroma_sample_position = 0
+	appendBits(0, 1) // separate_uv_delta_q = 0
+
+	// Pack bits into bytes
+	payload := make([]byte, (len(bits)+7)/8)
+	for i, b := range bits {
+		if b == 1 {
+			payload[i/8] |= 1 << (7 - uint(i%8))
+		}
+	}
+
+	// Wrap in OBU header
+	obu := make([]byte, 0, 2+len(payload))
+	obu = append(obu, 0x0a)              // OBU header: type=1, has_size=1
+	obu = append(obu, byte(len(payload))) // LEB128 size
+	obu = append(obu, payload...)
+
+	hdr, err := ParseAV1SequenceHeader(obu)
+	if err != nil {
+		t.Fatalf("ParseAV1SequenceHeader error: %v", err)
+	}
+
+	if hdr.SeqProfile != 0 {
+		t.Errorf("SeqProfile: got %d, want 0", hdr.SeqProfile)
+	}
+	if hdr.SeqLevelIdx != 8 {
+		t.Errorf("SeqLevelIdx: got %d, want 8", hdr.SeqLevelIdx)
+	}
+	if hdr.SeqTier != 0 {
+		t.Errorf("SeqTier: got %d, want 0", hdr.SeqTier)
+	}
+	if hdr.Width != 16 {
+		t.Errorf("Width: got %d, want 16", hdr.Width)
+	}
+	if hdr.Height != 16 {
+		t.Errorf("Height: got %d, want 16", hdr.Height)
+	}
+	if hdr.BitDepth != 8 {
+		t.Errorf("BitDepth: got %d, want 8", hdr.BitDepth)
+	}
+}
+
 func TestIsAV1KeyframeFrameHeaderOBU(t *testing.T) {
 	t.Parallel()
 

@@ -230,6 +230,7 @@ func parseSequenceHeaderPayload(payload []byte) (*AV1SequenceHeader, error) {
 	_ = stillPicture
 
 	var decoderModelInfoPresent bool
+	var bufferDelayLengthMinus1 uint
 
 	if reducedStillPicture == 1 {
 		hdr.SeqLevelIdx = int(br.readBits(5))
@@ -249,7 +250,8 @@ func parseSequenceHeaderPayload(payload []byte) (*AV1SequenceHeader, error) {
 			dmi := br.readBits(1)
 			decoderModelInfoPresent = dmi == 1
 			if decoderModelInfoPresent {
-				br.readBits(5)  // buffer_delay_length_minus_1
+				// decoder_model_info()
+				bufferDelayLengthMinus1 = br.readBits(5)
 				br.readBits(32) // num_units_in_decoding_tick
 				br.readBits(5)  // buffer_removal_time_length_minus_1
 				br.readBits(5)  // frame_presentation_time_length_minus_1
@@ -271,7 +273,14 @@ func parseSequenceHeaderPayload(payload []byte) (*AV1SequenceHeader, error) {
 				hdr.SeqTier = int(tier)
 			}
 			if decoderModelInfoPresent {
-				br.readBits(1) // decoder_model_present_for_this_op
+				decoderModelPresentForThisOp := br.readBits(1)
+				if decoderModelPresentForThisOp == 1 {
+					// operating_parameters_info(): skip decoder/encoder buffer delays and flag
+					n := int(bufferDelayLengthMinus1) + 1
+					br.readBits(n) // decoder_buffer_delay[i]
+					br.readBits(n) // encoder_buffer_delay[i]
+					br.readBits(1) // low_delay_mode_flag[i]
+				}
 			}
 			if initialDisplayDelayPresent == 1 {
 				flag := br.readBits(1)
