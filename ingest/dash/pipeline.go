@@ -55,9 +55,29 @@ func newDASHPipeline(streamKey string, relay broadcaster, seqHdrOBU []byte) *das
 // broadcasts them through the relay. Keyframes start a new group and carry
 // the AV1 sequence header OBU as SPS so that late-joining decoders can
 // configure themselves.
+//
+// Frames are paced based on PTS deltas to avoid bursting an entire segment
+// worth of frames at once (which causes jittery playback at the viewer).
 func (p *dashPipeline) processVideoSamples(samples []mediaSample) {
+	if len(samples) == 0 {
+		return
+	}
+
+	basePTS := samples[0].PTS
+	wallStart := time.Now()
+
 	for i := range samples {
 		s := &samples[i]
+
+		// Pace: sleep until this frame's presentation time relative to the
+		// first frame in the batch, so frames arrive at ~real-time cadence.
+		if i > 0 {
+			ptsDelta := time.Duration(s.PTS-basePTS) * time.Microsecond
+			wallElapsed := time.Since(wallStart)
+			if sleep := ptsDelta - wallElapsed; sleep > 0 {
+				time.Sleep(sleep)
+			}
+		}
 
 		frame := &media.VideoFrame{
 			PTS:        s.PTS,
@@ -79,10 +99,25 @@ func (p *dashPipeline) processVideoSamples(samples []mediaSample) {
 }
 
 // processAudioSamples converts audio mediaSamples into AudioFrames and
-// broadcasts them through the relay.
+// broadcasts them through the relay. Paced by PTS like video.
 func (p *dashPipeline) processAudioSamples(samples []mediaSample) {
+	if len(samples) == 0 {
+		return
+	}
+
+	basePTS := samples[0].PTS
+	wallStart := time.Now()
+
 	for i := range samples {
 		s := &samples[i]
+
+		if i > 0 {
+			ptsDelta := time.Duration(s.PTS-basePTS) * time.Microsecond
+			wallElapsed := time.Since(wallStart)
+			if sleep := ptsDelta - wallElapsed; sleep > 0 {
+				time.Sleep(sleep)
+			}
+		}
 
 		frame := &media.AudioFrame{
 			PTS:  s.PTS,

@@ -358,9 +358,8 @@ func (p *Puller) runPullLoop(
 			p.log.Warn("parse video segment", "seg", segNum, "error", err)
 			continue
 		}
-		pipeline.processVideoSamples(videoSamples)
-
-		// Fetch audio segment.
+		// Fetch audio segment in parallel with video pacing.
+		var audioSamples []mediaSample
 		if hasAudio {
 			audioSegNum := computeSegmentNumber(time.Now(), info.AvailabilityStartTime, audioTmpl)
 			audioMediaURL := resolveMediaURL(audioTmpl, audioRep.ID, audioSegNum, baseURL)
@@ -370,15 +369,21 @@ func (p *Puller) runPullLoop(
 					return
 				}
 				p.log.Warn("fetch audio segment", "seg", audioSegNum, "url", audioMediaURL, "error", err)
-				continue
+			} else {
+				audioSamples, err = parseMediaSegment(audioData, initInfo, false)
+				if err != nil {
+					p.log.Warn("parse audio segment", "seg", audioSegNum, "error", err)
+				}
 			}
-
-			audioSamples, err := parseMediaSegment(audioData, initInfo, false)
-			if err != nil {
-				p.log.Warn("parse audio segment", "seg", audioSegNum, "error", err)
-				continue
-			}
-			pipeline.processAudioSamples(audioSamples)
 		}
+
+		// Pace video and audio concurrently so they interleave naturally.
+		done := make(chan struct{})
+		go func() {
+			pipeline.processAudioSamples(audioSamples)
+			close(done)
+		}()
+		pipeline.processVideoSamples(videoSamples)
+		<-done
 	}
 }
