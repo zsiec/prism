@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -155,6 +156,14 @@ type ServerConfig struct {
 	// The callback receives the viewer's stream key and the raw datagram bytes.
 	// Called from the session's datagram read goroutine — must not block.
 	OnDatagram func(streamKey string, data []byte)
+
+	// OnBidirectionalStream is called when a viewer opens a new bidirectional
+	// WebTransport stream (beyond the initial MoQ control stream). The callback
+	// receives the viewer's stream key and the stream itself. The callback is
+	// responsible for reading from and writing to the stream; it runs in its
+	// own goroutine and should return when done. The stream is automatically
+	// accepted from the session's accept loop.
+	OnBidirectionalStream func(streamKey string, stream io.ReadWriteCloser)
 }
 
 // streamResources bundles the relay and stats provider for a single live
@@ -446,7 +455,8 @@ func (s *Server) setupMoQ(r *http.Request, session *webtransport.Session, contro
 		Relay:              relay,
 		StatsProvider:      s.GetPipeline,
 		ControlBroadcaster: s.controlBroadcaster,
-		OnDatagram:         s.config.OnDatagram,
+		OnDatagram:            s.config.OnDatagram,
+		OnBidirectionalStream: s.config.OnBidirectionalStream,
 	})
 
 	pathKey, err := moqSession.handleSetup()
