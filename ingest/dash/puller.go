@@ -11,7 +11,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zsiec/prism/demux"
 	"github.com/zsiec/prism/distribution"
+	"github.com/zsiec/prism/moq"
 )
 
 // PullRequest describes a DASH source to pull from.
@@ -281,12 +283,21 @@ func (p *Puller) runPullLoop(
 		mgr.Create(req.StreamKey)
 	}
 
-	// Set video info on relay.
-	relay.SetVideoInfo(distribution.VideoInfo{
+	// Set video info on relay with proper RFC 6381 codec string and decoder config.
+	vi := distribution.VideoInfo{
 		Codec:  initInfo.VideoCodec,
 		Width:  initInfo.Width,
 		Height: initInfo.Height,
-	})
+	}
+	if initInfo.SeqHeaderOBU != nil {
+		if hdr, err := demux.ParseAV1SequenceHeader(initInfo.SeqHeaderOBU); err == nil {
+			vi.Codec = hdr.CodecString()
+			vi.Width = hdr.Width
+			vi.Height = hdr.Height
+		}
+		vi.DecoderConfig = moq.BuildAV1DecoderConfig(initInfo.SeqHeaderOBU)
+	}
+	relay.SetVideoInfo(vi)
 
 	// Set audio info if available.
 	if hasAudio {
