@@ -488,6 +488,142 @@ func TestMoQWriterBytesWritten(t *testing.T) {
 	}
 }
 
+func TestMoQWriterVideoFrameAV1Keyframe(t *testing.T) {
+	t.Parallel()
+	w := NewMoQWriter(1, 0)
+	var buf bytes.Buffer
+
+	if err := w.WriteStreamHeader(&buf, TrackIDVideo, 1, 0); err != nil {
+		t.Fatalf("WriteStreamHeader failed: %v", err)
+	}
+	buf.Reset()
+
+	// AV1 sequence header OBU for 1920x1080 8-bit (from demux/av1_test.go)
+	seqHdrOBU := []byte{
+		0x0a, 0x0b,
+		0x00, 0x00, 0x00, 0x42, 0xab, 0xbf, 0xc3, 0x71,
+		0x2b, 0xe4, 0x01,
+	}
+
+	// Raw OBU payload representing the frame data
+	wireData := []byte{0x32, 0x10, 0xAA, 0xBB, 0xCC, 0xDD}
+
+	frame := &media.VideoFrame{
+		PTS:        50000,
+		IsKeyframe: true,
+		Codec:      "av1",
+		SPS:        seqHdrOBU,
+		WireData:   wireData,
+	}
+
+	n, err := w.WriteVideoFrame(&buf, frame)
+	if err != nil {
+		t.Fatalf("WriteVideoFrame failed: %v", err)
+	}
+
+	if n != int64(buf.Len()) {
+		t.Errorf("bytes written: got %d, actual buffer %d", n, buf.Len())
+	}
+
+	data := buf.Bytes()
+	pos := 0
+
+	// Object ID
+	objectID, nn, err := quicvarint.Parse(data[pos:])
+	if err != nil {
+		t.Fatalf("parse object ID: %v", err)
+	}
+	if objectID != 0 {
+		t.Errorf("object ID: got %d, want 0", objectID)
+	}
+	pos += nn
+
+	// Extension headers length
+	extLen, nn, err := quicvarint.Parse(data[pos:])
+	if err != nil {
+		t.Fatalf("parse ext length: %v", err)
+	}
+	pos += nn
+
+	extEnd := pos + int(extLen)
+	foundTimestamp := false
+	foundMarking := false
+	foundConfig := false
+	var configData []byte
+
+	for pos < extEnd {
+		extID, nn, err := quicvarint.Parse(data[pos:])
+		if err != nil {
+			t.Fatalf("parse ext ID: %v", err)
+		}
+		pos += nn
+
+		if extID%2 == 0 {
+			val, nn, err := quicvarint.Parse(data[pos:])
+			if err != nil {
+				t.Fatalf("parse ext value: %v", err)
+			}
+			pos += nn
+
+			switch extID {
+			case locExtCaptureTimestamp:
+				foundTimestamp = true
+				if val != 50000 {
+					t.Errorf("capture timestamp: got %d, want 50000", val)
+				}
+			case locExtVideoFrameMarking:
+				foundMarking = true
+				if val != vfmKeyframe {
+					t.Errorf("video frame marking: got 0x%x, want 0x%x", val, vfmKeyframe)
+				}
+			}
+		} else {
+			valLen, nn, err := quicvarint.Parse(data[pos:])
+			if err != nil {
+				t.Fatalf("parse ext value length: %v", err)
+			}
+			pos += nn
+
+			if extID == locExtVideoConfig {
+				foundConfig = true
+				configData = data[pos : pos+int(valLen)]
+			}
+			pos += int(valLen)
+		}
+	}
+
+	if !foundTimestamp {
+		t.Error("missing capture timestamp extension")
+	}
+	if !foundMarking {
+		t.Error("missing video frame marking extension")
+	}
+	if !foundConfig {
+		t.Error("missing video config extension")
+	}
+
+	// AV1CodecConfigurationRecord starts with marker|version = 0x81
+	if len(configData) < 4 {
+		t.Fatalf("config data too short: %d bytes", len(configData))
+	}
+	if configData[0] != 0x81 {
+		t.Errorf("AV1 config marker|version: got 0x%02x, want 0x81", configData[0])
+	}
+
+	// Payload length
+	payloadLen, nn, err := quicvarint.Parse(data[pos:])
+	if err != nil {
+		t.Fatalf("parse payload length: %v", err)
+	}
+	pos += nn
+
+	// Payload should be the raw WireData (pass-through, no AnnexB conversion)
+	payload := data[pos : pos+int(payloadLen)]
+	if !bytes.Equal(payload, wireData) {
+		t.Errorf("payload mismatch: got %x, want %x", payload, wireData)
+	}
+}
+
 func TestMoQWriterStreamHeaderSize(t *testing.T) {
 	t.Parallel()
 	w := NewMoQWriter(1, 0)

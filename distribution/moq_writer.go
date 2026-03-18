@@ -88,12 +88,19 @@ func (m *moqWriter) WriteVideoFrame(w io.Writer, frame *media.VideoFrame) (int64
 	}
 
 	// Video Config on keyframes (ID 13, odd → length-prefixed bytes)
-	if frame.IsKeyframe && frame.SPS != nil && frame.PPS != nil {
+	if frame.IsKeyframe && frame.SPS != nil {
 		var configData []byte
-		if frame.Codec == "h265" && frame.VPS != nil {
-			configData = moq.BuildHEVCDecoderConfig(frame.VPS, frame.SPS, frame.PPS)
-		} else {
-			configData = moq.BuildAVCDecoderConfig(frame.SPS, frame.PPS)
+		switch frame.Codec {
+		case "av1":
+			configData = moq.BuildAV1DecoderConfig(frame.SPS)
+		case "h265":
+			if frame.VPS != nil && frame.PPS != nil {
+				configData = moq.BuildHEVCDecoderConfig(frame.VPS, frame.SPS, frame.PPS)
+			}
+		default:
+			if frame.PPS != nil {
+				configData = moq.BuildAVCDecoderConfig(frame.SPS, frame.PPS)
+			}
 		}
 		if configData != nil {
 			exts = quicvarint.Append(exts, locExtVideoConfig)
