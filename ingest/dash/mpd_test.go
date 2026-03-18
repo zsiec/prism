@@ -253,3 +253,63 @@ func TestParseMPDInvalid(t *testing.T) {
 		t.Error("expected error for invalid XML")
 	}
 }
+
+func TestResolveMediaURLZeroPadded(t *testing.T) {
+	t.Parallel()
+	// ffmpeg uses $Number%05d$ for zero-padded segment numbers
+	tmpl := segmentTemplate{
+		MediaPattern: "chunk-stream$RepresentationID$-$Number%05d$.m4s",
+	}
+	got := resolveMediaURL(tmpl, "0", 3, "http://localhost:8080/")
+	want := "http://localhost:8080/chunk-stream0-00003.m4s"
+	if got != want {
+		t.Errorf("resolveMediaURL zero-padded = %q, want %q", got, want)
+	}
+}
+
+// Test MPD with contentType on AdaptationSet and mimeType on Representation
+// (ffmpeg pattern)
+const testMPDContentType = `<?xml version="1.0" encoding="utf-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011"
+     type="dynamic"
+     availabilityStartTime="2026-03-18T00:00:00Z"
+     minimumUpdatePeriod="PT2S"
+     minBufferTime="PT2S">
+  <Period id="0" start="PT0.0S">
+    <AdaptationSet id="0" contentType="video" segmentAlignment="true">
+      <Representation id="0" mimeType="video/mp4" codecs="av01.0.05M.08" bandwidth="3000000" width="1280" height="720">
+        <SegmentTemplate timescale="1000000" duration="2000000"
+                         initialization="init-stream$RepresentationID$.m4s"
+                         media="chunk-stream$RepresentationID$-$Number%05d$.m4s" startNumber="1"/>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet id="1" contentType="audio" segmentAlignment="true">
+      <Representation id="1" mimeType="audio/mp4" codecs="mp4a.40.2" bandwidth="128000" audioSamplingRate="48000">
+        <SegmentTemplate timescale="1000000" duration="2000000"
+                         initialization="init-stream$RepresentationID$.m4s"
+                         media="chunk-stream$RepresentationID$-$Number%05d$.m4s" startNumber="1"/>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>`
+
+func TestParseMPDContentTypeAttr(t *testing.T) {
+	t.Parallel()
+	info, err := parseMPD([]byte(testMPDContentType))
+	if err != nil {
+		t.Fatalf("parseMPD: %v", err)
+	}
+	if !info.IsDynamic {
+		t.Error("expected dynamic MPD")
+	}
+	if len(info.VideoAdaptations) != 1 {
+		t.Fatalf("video adaptations = %d, want 1", len(info.VideoAdaptations))
+	}
+	if len(info.AudioAdaptations) != 1 {
+		t.Fatalf("audio adaptations = %d, want 1", len(info.AudioAdaptations))
+	}
+	videoRep := info.VideoAdaptations[0].Representations[0]
+	if videoRep.Codecs != "av01.0.05M.08" {
+		t.Errorf("video codecs = %q, want av01.0.05M.08", videoRep.Codecs)
+	}
+}

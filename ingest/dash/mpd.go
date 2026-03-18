@@ -2,6 +2,7 @@ package dash
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -82,8 +83,10 @@ func parseMPD(data []byte) (*mpdInfo, error) {
 			if as == nil {
 				continue
 			}
+			// Determine content type from mimeType, contentType, or Representation mimeType
+			contentType := classifyAdaptationSet(as)
 			ai := adaptationInfo{
-				MimeType: as.MimeType,
+				MimeType: contentType,
 			}
 			for _, rep := range as.Representations {
 				ri := representationInfo{}
@@ -117,9 +120,9 @@ func parseMPD(data []byte) (*mpdInfo, error) {
 				ai.Representations = append(ai.Representations, ri)
 			}
 
-			if strings.HasPrefix(as.MimeType, "video") {
+			if strings.HasPrefix(contentType, "video") {
 				info.VideoAdaptations = append(info.VideoAdaptations, ai)
-			} else if strings.HasPrefix(as.MimeType, "audio") {
+			} else if strings.HasPrefix(contentType, "audio") {
 				info.AudioAdaptations = append(info.AudioAdaptations, ai)
 			}
 		}
@@ -192,11 +195,21 @@ func resolveInitURL(tmpl segmentTemplate, repID, baseURL string) string {
 	return baseURL + s
 }
 
-// resolveMediaURL replaces $RepresentationID$ and $Number$ in the media
-// pattern and prepends the base URL.
+// numberPattern matches $Number$ or $Number%0Nd$ (printf-style zero-padded).
+var numberPattern = regexp.MustCompile(`\$Number(%0(\d+)d)?\$`)
+
+// resolveMediaURL replaces $RepresentationID$ and $Number$/$Number%05d$ in
+// the media pattern and prepends the base URL.
 func resolveMediaURL(tmpl segmentTemplate, repID string, number int, baseURL string) string {
 	s := strings.ReplaceAll(tmpl.MediaPattern, "$RepresentationID$", repID)
-	s = strings.ReplaceAll(s, "$Number$", strconv.Itoa(number))
+	s = numberPattern.ReplaceAllStringFunc(s, func(match string) string {
+		sub := numberPattern.FindStringSubmatch(match)
+		if sub[2] != "" {
+			width, _ := strconv.Atoi(sub[2])
+			return fmt.Sprintf("%0*d", width, number)
+		}
+		return strconv.Itoa(number)
+	})
 	return baseURL + s
 }
 
@@ -220,4 +233,30 @@ func computeSegmentNumber(now time.Time, ast time.Time, tmpl segmentTemplate) in
 		liveSegment = 0
 	}
 	return tmpl.StartNumber + liveSegment
+}
+
+// classifyAdaptationSet determines if an AdaptationSet is "video" or "audio"
+// by checking (in order): mimeType attr, contentType attr, codec prefix heuristic.
+func classifyAdaptationSet(as *mpd.AdaptationSet) string {
+	// 1. AdaptationSet mimeType (e.g., "video/mp4")
+	if as.MimeType != "" {
+		return as.MimeType
+	}
+	// 2. AdaptationSet contentType (e.g., "video", "audio")
+	if as.ContentType != nil && *as.ContentType != "" {
+		return *as.ContentType
+	}
+	// 3. Infer from codec string on first Representation
+	for _, rep := range as.Representations {
+		if rep.Codecs != nil {
+			c := *rep.Codecs
+			if strings.HasPrefix(c, "av01") || strings.HasPrefix(c, "avc") || strings.HasPrefix(c, "hev") || strings.HasPrefix(c, "hvc") || strings.HasPrefix(c, "vp0") {
+				return "video"
+			}
+			if strings.HasPrefix(c, "mp4a") || strings.HasPrefix(c, "opus") {
+				return "audio"
+			}
+		}
+	}
+	return ""
 }
