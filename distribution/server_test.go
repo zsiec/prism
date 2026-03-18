@@ -409,3 +409,58 @@ func TestStreamLifecycleCallbacks(t *testing.T) {
 		// If we get here without panicking, the test passes.
 	})
 }
+
+func TestHandleDASHPullList(t *testing.T) {
+	t.Parallel()
+
+	srv := newTestServer(t)
+	handler := srv.APIHandler()
+
+	req := httptest.NewRequest("GET", "/api/dash-pull", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	// DASHList is nil, should return empty array.
+	body := strings.TrimSpace(rec.Body.String())
+	if body != "[]" {
+		t.Fatalf("body = %q, want %q", body, "[]")
+	}
+}
+
+func TestHandleDASHPullCreateMissingFields(t *testing.T) {
+	t.Parallel()
+
+	srv := newTestServer(t)
+	srv.config.DASHPull = func(_, _, _, _ string) error { return nil }
+	handler := srv.APIHandler()
+
+	req := httptest.NewRequest("POST", "/api/dash-pull", strings.NewReader(`{"url":""}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestHandleDASHPullNotConfigured(t *testing.T) {
+	t.Parallel()
+
+	srv := newTestServer(t)
+	// DASHPull is nil.
+	handler := srv.APIHandler()
+
+	req := httptest.NewRequest("POST", "/api/dash-pull", strings.NewReader(`{"url":"https://example.com/live.mpd","streamKey":"test"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotImplemented)
+	}
+}
