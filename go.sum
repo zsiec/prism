@@ -1,7 +1,10 @@
+github.com/Eyevinn/mp4ff v0.51.0 h1:ZYdHFXEcB3kJkCeCHMHl/tbCm64FJsD2XOU0Sj+ME2M=
+github.com/Eyevinn/mp4ff v0.51.0/go.mod h1:hJNUUqOBryLAzUW9wpCJyw2HaI+TCd2rUPhafoS5lgg=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/dunglas/httpsfv v1.1.0 h1:Jw76nAyKWKZKFrpMMcL76y35tOpYHqQPzHQiwDvpe54=
 github.com/dunglas/httpsfv v1.1.0/go.mod h1:zID2mqw9mFsnt7YC3vYQ9/cjq30q41W+1AnDwH8TiMg=
+github.com/go-test/deep v1.1.0/go.mod h1:5C2ZWiW0ErCdrYzpqxLbTX7MG14M9iiw8DgHncVwcsE=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/quic-go/qpack v0.6.0 h1:g7W+BMYynC1LbYLSqRt8PBg5Tgwxn214ZZR34VIOjz8=
@@ -12,6 +15,10 @@ github.com/quic-go/webtransport-go v0.10.0 h1:LqXXPOXuETY5Xe8ITdGisBzTYmUOy5eSj+
 github.com/quic-go/webtransport-go v0.10.0/go.mod h1:LeGIXr5BQKE3UsynwVBeQrU1TPrbh73MGoC6jd+V7ow=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
+github.com/unki2aut/go-mpd v0.0.0-20250610073145-8336a8d84ee7 h1:FsfEp+/I/2p/WObIlPlB10kITDkOjzi/IDqM9GYpYJc=
+github.com/unki2aut/go-mpd v0.0.0-20250610073145-8336a8d84ee7/go.mod h1:LITqXLCxxmcoHtOMgZh5NbcfS4RCrrADQXPVkYwF/cc=
+github.com/unki2aut/go-xsd-types v0.0.0-20200220223938-30e5405398f8 h1:u0Bi6Mf8BKPQnxGJ7QubdMyhb0SJjnQU7kX0BA9eASk=
+github.com/unki2aut/go-xsd-types v0.0.0-20200220223938-30e5405398f8/go.mod h1:uIeMfpmWIZ8SGp+fTfwDBWiiRn3aJm4b7rFSro9s++Q=
 github.com/zsiec/ccx v0.2.0 h1:RaCC4a0ng9wa6AUvT9Kg9kfiEy9svfXL5mmRbi6Ykmo=
 github.com/zsiec/ccx v0.2.0/go.mod h1:Y30W1TCZX7HAXM0miCzG18kSyKtJvqbOk7zrFcTGpU4=
 github.com/zsiec/srtgo v0.2.4 h1:WzQfUMSiQglWJDilcXgFvW/23IGLr7FXNRdrbNKJyS8=

@@ -11,8 +11,11 @@ require (
 )
 
 require (
+	github.com/Eyevinn/mp4ff v0.51.0 // indirect
 	github.com/dunglas/httpsfv v1.1.0 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
+	github.com/unki2aut/go-mpd v0.0.0-20250610073145-8336a8d84ee7 // indirect
+	github.com/unki2aut/go-xsd-types v0.0.0-20200220223938-30e5405398f8 // indirect
 	golang.org/x/crypto v0.42.0 // indirect
 	golang.org/x/net v0.44.0 // indirect
 	golang.org/x/sys v0.36.0 // indirect
