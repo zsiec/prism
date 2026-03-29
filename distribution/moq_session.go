@@ -549,7 +549,13 @@ func (m *MoQSession) writeVideoLoop(ctx context.Context, sub *moqTrackSub) {
 				closeStream()
 				currentGroupID = frame.GroupID
 
+				t0 := time.Now()
 				stream, err := m.session.OpenUniStreamSync(ctx)
+				if openDur := time.Since(t0); openDur > 50*time.Millisecond {
+					m.log.Warn("video stream open slow",
+						"duration_ms", openDur.Milliseconds(),
+						"group", currentGroupID)
+				}
 				if err != nil {
 					m.log.Debug("video stream open failed", "error", err)
 					return
@@ -568,7 +574,15 @@ func (m *MoQSession) writeVideoLoop(ctx context.Context, sub *moqTrackSub) {
 				continue
 			}
 
+			t0 := time.Now()
 			n, err := sub.writer.WriteVideoFrame(currentStream, frame)
+			if writeDur := time.Since(t0); writeDur > 50*time.Millisecond {
+				m.log.Warn("video frame write slow",
+					"duration_ms", writeDur.Milliseconds(),
+					"bytes", n,
+					"keyframe", frame.IsKeyframe,
+					"group", currentGroupID)
+			}
 			if err != nil {
 				closeStream()
 				m.log.Debug("video frame write failed", "error", err)

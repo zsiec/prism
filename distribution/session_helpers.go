@@ -1,6 +1,7 @@
 package distribution
 
 import (
+	"log/slog"
 	"sync/atomic"
 
 	"github.com/zsiec/prism/media"
@@ -29,7 +30,12 @@ func trySendVideo(
 		videoSent.Add(1)
 	default:
 		videoDropped.Add(1)
-		if !frame.IsKeyframe {
+		if frame.IsKeyframe {
+			slog.Warn("trySendVideo: keyframe dropped (channel full)",
+				"group", frame.GroupID,
+				"chanLen", len(videoCh),
+				"chanCap", cap(videoCh))
+		} else {
 			damagedGroup.Store(frame.GroupID)
 		}
 	}
