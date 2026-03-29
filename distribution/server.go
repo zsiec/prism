@@ -164,6 +164,11 @@ type ServerConfig struct {
 	// own goroutine and should return when done. The stream is automatically
 	// accepted from the session's accept loop.
 	OnBidirectionalStream func(streamKey string, stream io.ReadWriteCloser)
+
+	// OnViewerAdded is called after a MoQ viewer is added to a relay.
+	// The callback receives the stream key the viewer subscribed to.
+	// Called from the handleMoQ goroutine — must not block.
+	OnViewerAdded func(streamKey string)
 }
 
 // streamResources bundles the relay and stats provider for a single live
@@ -405,6 +410,10 @@ func (s *Server) handleMoQ(w http.ResponseWriter, r *http.Request) {
 
 	relay.AddViewer(moqSession)
 	defer relay.RemoveViewer(moqSession.ID())
+
+	if s.config.OnViewerAdded != nil {
+		s.config.OnViewerAdded(streamKey)
+	}
 
 	_ = streamKey // used during setup; kept for clarity
 	if err := moqSession.Run(session.Context()); err != nil {
