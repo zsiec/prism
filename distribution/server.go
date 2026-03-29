@@ -169,6 +169,15 @@ type ServerConfig struct {
 	// The callback receives the stream key the viewer subscribed to.
 	// Called from the handleMoQ goroutine — must not block.
 	OnViewerAdded func(streamKey string)
+
+	// QUICConfig overrides the default quic-go configuration for the
+	// underlying HTTP/3 + WebTransport server. When nil, sensible
+	// defaults are used (30s idle timeout, 0-RTT enabled, default
+	// flow control windows). Callers that stream live media should
+	// set larger flow control windows here — the quic-go defaults
+	// (512 KB stream / 768 KB connection) are too small for sustained
+	// video bitrates and cause server-side write blocking.
+	QUICConfig *quic.Config
 }
 
 // streamResources bundles the relay and stats provider for a single live
@@ -345,14 +354,19 @@ func (s *Server) Start(ctx context.Context) error {
 		Certificates: []tls.Certificate{s.config.Cert.TLSCert},
 	})
 
-	h3srv := &http3.Server{
-		Addr:      s.config.Addr,
-		Handler:   corsMiddleware(wtMux),
-		TLSConfig: tlsConfig,
-		QUICConfig: &quic.Config{
+	qc := s.config.QUICConfig
+	if qc == nil {
+		qc = &quic.Config{
 			MaxIdleTimeout: 30 * time.Second,
 			Allow0RTT:      true,
-		},
+		}
+	}
+
+	h3srv := &http3.Server{
+		Addr:       s.config.Addr,
+		Handler:    corsMiddleware(wtMux),
+		TLSConfig:  tlsConfig,
+		QUICConfig: qc,
 	}
 	webtransport.ConfigureHTTP3Server(h3srv)
 
