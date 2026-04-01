@@ -105,6 +105,23 @@ type SRTPullInfo struct {
 	StreamID  string `json:"streamId,omitempty"`
 }
 
+// DASHPullFunc initiates a DASH pull from a remote MPD URL.
+type DASHPullFunc func(url, streamKey, videoRepID, audioRepID string) error
+
+// DASHStopFunc stops an active DASH pull by stream key.
+type DASHStopFunc func(streamKey string) error
+
+// DASHListFunc returns all active DASH pulls.
+type DASHListFunc func() []DASHPullInfo
+
+// DASHPullInfo describes an active DASH pull.
+type DASHPullInfo struct {
+	URL        string `json:"url"`
+	StreamKey  string `json:"streamKey"`
+	VideoRepID string `json:"videoRepresentationId,omitempty"`
+	AudioRepID string `json:"audioRepresentationId,omitempty"`
+}
+
 // WebTransport session close error codes sent to clients via CloseWithError.
 const (
 	wtErrStreamNotFound webtransport.SessionErrorCode = 1
@@ -132,6 +149,9 @@ type ServerConfig struct {
 	SRTPull      SRTPullFunc
 	SRTStop      SRTStopFunc
 	SRTList      SRTListFunc
+	DASHPull     DASHPullFunc
+	DASHStop     DASHStopFunc
+	DASHList     DASHListFunc
 	ExtraRoutes  func(mux *http.ServeMux)
 
 	// OnStreamRegistered is called after a new stream relay is created
@@ -297,6 +317,10 @@ func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/srt-pull", s.handleSRTPullCreate)
 	mux.HandleFunc("DELETE /api/srt-pull", s.handleSRTPullStop)
 	mux.HandleFunc("OPTIONS /api/srt-pull", s.handleSRTPullOptions)
+	mux.HandleFunc("GET /api/dash-pull", s.handleDASHPullList)
+	mux.HandleFunc("POST /api/dash-pull", s.handleDASHPullCreate)
+	mux.HandleFunc("DELETE /api/dash-pull", s.handleDASHPullStop)
+	mux.HandleFunc("OPTIONS /api/dash-pull", s.handleDASHPullOptions)
 
 	if s.config.ExtraRoutes != nil {
 		s.config.ExtraRoutes(mux)

@@ -228,7 +228,19 @@ func (p *Pipeline) forwardVideo(frame *media.VideoFrame) {
 // including decoder configuration record for the catalog.
 func (p *Pipeline) buildVideoInfo(frame *media.VideoFrame) (distribution.VideoInfo, bool) {
 	var vi distribution.VideoInfo
-	if frame.Codec == "h265" {
+	switch frame.Codec {
+	case "av1":
+		info, err := demux.ParseAV1SequenceHeader(frame.SPS)
+		if err != nil {
+			return vi, false
+		}
+		vi = distribution.VideoInfo{
+			Codec:  info.CodecString(),
+			Width:  info.Width,
+			Height: info.Height,
+		}
+		vi.DecoderConfig = moq.BuildAV1DecoderConfig(frame.SPS)
+	case "h265":
 		info, err := demux.ParseHEVCSPS(frame.SPS)
 		if err != nil {
 			return vi, false
@@ -241,7 +253,7 @@ func (p *Pipeline) buildVideoInfo(frame *media.VideoFrame) (distribution.VideoIn
 		if frame.VPS != nil {
 			vi.DecoderConfig = moq.BuildHEVCDecoderConfig(frame.VPS, frame.SPS, frame.PPS)
 		}
-	} else {
+	default:
 		info, err := demux.ParseSPS(frame.SPS)
 		if err != nil {
 			return vi, false

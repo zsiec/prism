@@ -31,6 +31,8 @@ test/harness/*
 *.swp
 *~
 
+docs/plans/*
+
 # Environment
 .env
 .env.*

@@ -19,6 +19,7 @@ import (
 	"github.com/zsiec/prism/certs"
 	"github.com/zsiec/prism/distribution"
 	"github.com/zsiec/prism/ingest"
+	dashingest "github.com/zsiec/prism/ingest/dash"
 	srtingest "github.com/zsiec/prism/ingest/srt"
 	"github.com/zsiec/prism/pipeline"
 	"github.com/zsiec/prism/stream"
@@ -80,6 +81,7 @@ func main() {
 		a.handleNewStream(ctx, key, input, format)
 	})
 	a.srtCaller = srtingest.NewCaller(a.registry, nil)
+	a.dashPuller = dashingest.NewPuller(nil)
 
 	var distErr error
 	a.distSrv, distErr = distribution.NewServer(distribution.ServerConfig{
@@ -96,7 +98,19 @@ func main() {
 		SRTStop: func(streamKey string) error {
 			return a.srtCaller.Stop(streamKey)
 		},
-		SRTList:      a.listSRTPulls,
+		SRTList: a.listSRTPulls,
+		DASHPull: func(url, streamKey, videoRepID, audioRepID string) error {
+			return a.dashPuller.Pull(ctx, dashingest.PullRequest{
+				URL:        url,
+				StreamKey:  streamKey,
+				VideoRepID: videoRepID,
+				AudioRepID: audioRepID,
+			}, a.distSrv, &streamManagerAdapter{a.mgr})
+		},
+		DASHStop: func(streamKey string) error {
+			return a.dashPuller.Stop(streamKey)
+		},
+		DASHList:     a.listDASHPulls,
 		StreamLister: a.listStreams,
 		IngestLookup: a.lookupIngest,
 	})
@@ -138,6 +152,18 @@ func main() {
 		return a.distSrv.Start(ctx)
 	})
 
+	if dashURL := os.Getenv("DASH_SOURCE"); dashURL != "" {
+		g.Go(func() error {
+			<-time.After(500 * time.Millisecond)
+			return a.dashPuller.Pull(ctx, dashingest.PullRequest{
+				URL:        dashURL,
+				StreamKey:  envOr("DASH_STREAM_KEY", "dash-live"),
+				VideoRepID: os.Getenv("DASH_VIDEO_REP"),
+				AudioRepID: os.Getenv("DASH_AUDIO_REP"),
+			}, a.distSrv, &streamManagerAdapter{a.mgr})
+		})
+	}
+
 	if err := g.Wait(); err != nil {
 		slog.Error("server error", "error", err)
 		os.Exit(1)
@@ -145,10 +171,11 @@ func main() {
 }
 
 type app struct {
-	mgr       *stream.Manager
-	registry  *ingest.Registry
-	srtCaller *srtingest.Caller
-	distSrv   *distribution.Server
+	mgr        *stream.Manager
+	registry   *ingest.Registry
+	srtCaller  *srtingest.Caller
+	dashPuller *dashingest.Puller
+	distSrv    *distribution.Server
 }
 
 func (a *app) listSRTPulls() []distribution.SRTPullInfo {
@@ -159,6 +186,20 @@ func (a *app) listSRTPulls() []distribution.SRTPullInfo {
 			Address:   p.Address,
 			StreamKey: p.StreamKey,
 			StreamID:  p.StreamID,
+		}
+	}
+	return out
+}
+
+func (a *app) listDASHPulls() []distribution.DASHPullInfo {
+	pulls := a.dashPuller.ActivePulls()
+	out := make([]distribution.DASHPullInfo, len(pulls))
+	for i, p := range pulls {
+		out[i] = distribution.DASHPullInfo{
+			URL:        p.URL,
+			StreamKey:  p.StreamKey,
+			VideoRepID: p.VideoRepID,
+			AudioRepID: p.AudioRepID,
 		}
 	}
 	return out
@@ -280,4 +321,19 @@ func buildStreamDescription(info distribution.StreamInfo) string {
 	}
 
 	return strings.Join(parts, " · ")
+}
+
+// streamManagerAdapter adapts *stream.Manager to the dash.StreamManager
+// interface, which uses interface{} in the Create return to avoid an import
+// cycle with the stream package.
+type streamManagerAdapter struct {
+	mgr *stream.Manager
+}
+
+func (a *streamManagerAdapter) Create(key string) (interface{}, bool) {
+	return a.mgr.Create(key)
+}
+
+func (a *streamManagerAdapter) Remove(key string) {
+	a.mgr.Remove(key)
 }

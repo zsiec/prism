@@ -279,6 +279,127 @@ func TestBuildHEVCDecoderConfig(t *testing.T) {
 	}
 }
 
+func TestBuildAV1DecoderConfig(t *testing.T) {
+	t.Parallel()
+
+	// 1920x1080, profile 0, level 8, 8-bit, 4:2:0 (from demux/av1_test.go)
+	seqHeaderOBU := []byte{
+		0x0a, 0x0b, // OBU header (type=1, has_size=1) + LEB128 size=11
+		0x00, 0x00, 0x00, 0x42, 0xab, 0xbf, 0xc3, 0x71,
+		0x2b, 0xe4, 0x01,
+	}
+
+	config := BuildAV1DecoderConfig(seqHeaderOBU)
+	if config == nil {
+		t.Fatal("expected non-nil config")
+	}
+
+	// Total length = 4-byte header + len(seqHeaderOBU)
+	expectedLen := 4 + len(seqHeaderOBU)
+	if len(config) != expectedLen {
+		t.Fatalf("total length: got %d, want %d", len(config), expectedLen)
+	}
+
+	// Byte 0: marker(1)=1 | version(7)=1 → 0x81
+	if config[0] != 0x81 {
+		t.Errorf("byte 0 (marker+version): got 0x%02x, want 0x81", config[0])
+	}
+
+	// Byte 1: seq_profile(3)=0 | seq_level_idx_0(5)=8 → 0x08
+	if config[1] != 0x08 {
+		t.Errorf("byte 1 (profile|level): got 0x%02x, want 0x08", config[1])
+	}
+
+	// Verify profile extracted correctly (top 3 bits)
+	profile := config[1] >> 5
+	if profile != 0 {
+		t.Errorf("profile: got %d, want 0", profile)
+	}
+
+	// Verify level extracted correctly (bottom 5 bits)
+	level := config[1] & 0x1F
+	if level != 8 {
+		t.Errorf("level: got %d, want 8", level)
+	}
+
+	// Byte 2: tier=0, high_bitdepth=0, twelve_bit=0, mono=0, csx=1, csy=1, csp=0 → 0x0C
+	if config[2] != 0x0C {
+		t.Errorf("byte 2 (tier/bd/chroma): got 0x%02x, want 0x0C", config[2])
+	}
+
+	// Byte 3: reserved = 0x00
+	if config[3] != 0x00 {
+		t.Errorf("byte 3 (reserved): got 0x%02x, want 0x00", config[3])
+	}
+
+	// configOBUs (bytes 4+) must match input seqHeaderOBU
+	if !bytes.Equal(config[4:], seqHeaderOBU) {
+		t.Error("configOBUs do not match input seqHeaderOBU")
+	}
+}
+
+func TestBuildAV1DecoderConfig10Bit(t *testing.T) {
+	t.Parallel()
+
+	// 640x480, profile 0, level 4, 10-bit, 4:2:0 (from demux/av1_test.go)
+	seqHeaderOBU := []byte{
+		0x0a, 0x0b, // OBU header (type=1, has_size=1) + LEB128 size=11
+		0x00, 0x00, 0x00, 0x24, 0xc4, 0xff, 0xdf, 0x12,
+		0xbe, 0x50, 0x10,
+	}
+
+	config := BuildAV1DecoderConfig(seqHeaderOBU)
+	if config == nil {
+		t.Fatal("expected non-nil config")
+	}
+
+	// Total length = 4-byte header + len(seqHeaderOBU)
+	expectedLen := 4 + len(seqHeaderOBU)
+	if len(config) != expectedLen {
+		t.Fatalf("total length: got %d, want %d", len(config), expectedLen)
+	}
+
+	// Byte 0: marker + version
+	if config[0] != 0x81 {
+		t.Errorf("byte 0: got 0x%02x, want 0x81", config[0])
+	}
+
+	// Byte 1: profile=0 | level=4 → 0x04
+	if config[1] != 0x04 {
+		t.Errorf("byte 1 (profile|level): got 0x%02x, want 0x04", config[1])
+	}
+
+	// Byte 2: tier=0, high_bitdepth=1, twelve_bit=0, mono=0, csx=1, csy=1, csp=0
+	// = 0<<7 | 1<<6 | 0<<5 | 0<<4 | 1<<3 | 1<<2 | 0 = 0x4C
+	if config[2] != 0x4C {
+		t.Errorf("byte 2 (tier/bd/chroma): got 0x%02x, want 0x4C", config[2])
+	}
+
+	// configOBUs (bytes 4+) must match input
+	if !bytes.Equal(config[4:], seqHeaderOBU) {
+		t.Error("configOBUs do not match input seqHeaderOBU")
+	}
+}
+
+func TestBuildAV1DecoderConfigNil(t *testing.T) {
+	t.Parallel()
+
+	if BuildAV1DecoderConfig(nil) != nil {
+		t.Error("expected nil for nil input")
+	}
+	if BuildAV1DecoderConfig([]byte{}) != nil {
+		t.Error("expected nil for empty input")
+	}
+	if BuildAV1DecoderConfig([]byte{0x0a}) != nil {
+		t.Error("expected nil for truncated input")
+	}
+
+	// Wrong OBU type (OBU_FRAME instead of SEQUENCE_HEADER)
+	if BuildAV1DecoderConfig([]byte{0x32, 0x01, 0x00}) != nil {
+		t.Error("expected nil for wrong OBU type")
+	}
+}
+
 func TestBuildHEVCDecoderConfigNil(t *testing.T) {
 	t.Parallel()
 	if BuildHEVCDecoderConfig(nil, []byte{0x42, 0x01, 0x01, 0x01}, []byte{0x44}) != nil {
