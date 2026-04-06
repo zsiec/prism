@@ -132,6 +132,7 @@ type ServerConfig struct {
 	SRTPull      SRTPullFunc
 	SRTStop      SRTStopFunc
 	SRTList      SRTListFunc
+	ExternalCert bool // true when using a CA-signed cert (not self-signed)
 	ExtraRoutes  func(mux *http.ServeMux)
 
 	// OnStreamRegistered is called after a new stream relay is created
@@ -403,8 +404,9 @@ type statsMessage struct {
 }
 
 type certHashResponse struct {
-	Hash string `json:"hash"`
-	Addr string `json:"addr"`
+	Hash    string `json:"hash"`
+	Addr    string `json:"addr"`
+	Trusted bool   `json:"trusted"`
 }
 
 func (s *Server) handleMoQ(w http.ResponseWriter, r *http.Request) {
@@ -555,8 +557,9 @@ func (s *Server) handleStreamDebug(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCertHash(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, certHashResponse{
-		Hash: s.config.Cert.FingerprintBase64(),
-		Addr: s.config.Addr,
+		Hash:    s.config.Cert.FingerprintBase64(),
+		Addr:    s.config.Addr,
+		Trusted: s.config.ExternalCert,
 	})
 }
 
