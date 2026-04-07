@@ -52,7 +52,7 @@ type MoQSession struct {
 	relay              *Relay
 	statsProvider      StatsProviderFunc
 	controlBroadcaster *ControlBroadcaster
-	onDatagram            func(streamKey string, data []byte)
+	onDatagram            func(streamKey string, data []byte) []byte
 	onBidirectionalStream func(streamKey string, stream io.ReadWriteCloser)
 	controlMu             sync.Mutex
 
@@ -86,8 +86,10 @@ type MoQSessionConfig struct {
 
 	// OnDatagram is called when a WebTransport datagram arrives from a viewer.
 	// The callback receives the viewer's stream key and the raw datagram bytes.
+	// If the callback returns a non-nil []byte, the response is sent back to
+	// the same session as a datagram (used for ping/pong clock sync).
 	// Called from the session's datagram read goroutine — must not block.
-	OnDatagram func(streamKey string, data []byte)
+	OnDatagram func(streamKey string, data []byte) []byte
 
 	// OnBidirectionalStream is called when a viewer opens a new bidirectional
 	// WebTransport stream. The callback receives the stream key and the stream.
@@ -260,7 +262,11 @@ func (m *MoQSession) readDatagramLoop(ctx context.Context) {
 			}
 			return
 		}
-		m.onDatagram(m.streamKey, data)
+		if resp := m.onDatagram(m.streamKey, data); resp != nil {
+			if err := m.session.SendDatagram(resp); err != nil {
+				m.log.Debug("datagram response send error", "error", err)
+			}
+		}
 	}
 }
 

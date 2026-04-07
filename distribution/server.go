@@ -155,8 +155,10 @@ type ServerConfig struct {
 
 	// OnDatagram is called when a WebTransport datagram arrives from a viewer.
 	// The callback receives the viewer's stream key and the raw datagram bytes.
+	// If the callback returns a non-nil []byte, the response is sent back to
+	// the same session as a datagram (used for ping/pong clock sync).
 	// Called from the session's datagram read goroutine — must not block.
-	OnDatagram func(streamKey string, data []byte)
+	OnDatagram func(streamKey string, data []byte) []byte
 
 	// OnBidirectionalStream is called when a viewer opens a new bidirectional
 	// WebTransport stream (beyond the initial MoQ control stream). The callback

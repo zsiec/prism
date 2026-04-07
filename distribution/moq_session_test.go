@@ -753,7 +753,7 @@ func TestMoQSession_DatagramCallback(t *testing.T) {
 	cfg := MoQSessionConfig{
 		ID:         "test-dg",
 		StreamKey:  "cam1",
-		OnDatagram: func(streamKey string, data []byte) {},
+		OnDatagram: func(streamKey string, data []byte) []byte { return nil },
 	}
 	session := NewMoQSession(cfg)
 	if session == nil {
@@ -782,8 +782,9 @@ func TestMoQSession_ReadDatagramLoop_NilSession(t *testing.T) {
 	cfg := MoQSessionConfig{
 		ID:        "test-dg-nosess",
 		StreamKey: "cam1",
-		OnDatagram: func(streamKey string, data []byte) {
+		OnDatagram: func(streamKey string, data []byte) []byte {
 			close(called)
+			return nil
 		},
 	}
 	session := NewMoQSession(cfg)
