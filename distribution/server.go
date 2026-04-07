@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -13,9 +14,9 @@ import (
 
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
+	webtransport "github.com/quic-go/webtransport-go"
 	"github.com/zsiec/prism/certs"
 	"github.com/zsiec/prism/moq"
-	"github.com/zsiec/prism/webtransport"
 )
 
 // StatsProvider is implemented by Pipeline to supply stream statistics
@@ -131,6 +132,7 @@ type ServerConfig struct {
 	SRTPull      SRTPullFunc
 	SRTStop      SRTStopFunc
 	SRTList      SRTListFunc
+	ExternalCert bool // true when using a CA-signed cert (not self-signed)
 	ExtraRoutes  func(mux *http.ServeMux)
 
 	// OnStreamRegistered is called after a new stream relay is created
@@ -153,8 +155,32 @@ type ServerConfig struct {
 
 	// OnDatagram is called when a WebTransport datagram arrives from a viewer.
 	// The callback receives the viewer's stream key and the raw datagram bytes.
+	// If the callback returns a non-nil []byte, the response is sent back to
+	// the same session as a datagram (used for ping/pong clock sync).
 	// Called from the session's datagram read goroutine — must not block.
-	OnDatagram func(streamKey string, data []byte)
+	OnDatagram func(streamKey string, data []byte) []byte
+
+	// OnBidirectionalStream is called when a viewer opens a new bidirectional
+	// WebTransport stream (beyond the initial MoQ control stream). The callback
+	// receives the viewer's stream key and the stream itself. The callback is
+	// responsible for reading from and writing to the stream; it runs in its
+	// own goroutine and should return when done. The stream is automatically
+	// accepted from the session's accept loop.
+	OnBidirectionalStream func(streamKey string, stream io.ReadWriteCloser)
+
+	// OnViewerAdded is called after a MoQ viewer is added to a relay.
+	// The callback receives the stream key the viewer subscribed to.
+	// Called from the handleMoQ goroutine — must not block.
+	OnViewerAdded func(streamKey string)
+
+	// QUICConfig overrides the default quic-go configuration for the
+	// underlying HTTP/3 + WebTransport server. When nil, sensible
+	// defaults are used (30s idle timeout, 0-RTT enabled, default
+	// flow control windows). Callers that stream live media should
+	// set larger flow control windows here — the quic-go defaults
+	// (512 KB stream / 768 KB connection) are too small for sustained
+	// video bitrates and cause server-side write blocking.
+	QUICConfig *quic.Config
 }
 
 // streamResources bundles the relay and stats provider for a single live
@@ -327,20 +353,28 @@ func (s *Server) Start(ctx context.Context) error {
 	wtMux.HandleFunc("/moq", s.handleMoQ)
 	s.registerAPIRoutes(wtMux)
 
-	tlsConfig := &tls.Config{
+	tlsConfig := http3.ConfigureTLSConfig(&tls.Config{
 		Certificates: []tls.Certificate{s.config.Cert.TLSCert},
+	})
+
+	qc := s.config.QUICConfig
+	if qc == nil {
+		qc = &quic.Config{
+			MaxIdleTimeout: 30 * time.Second,
+			Allow0RTT:      true,
+		}
 	}
 
+	h3srv := &http3.Server{
+		Addr:       s.config.Addr,
+		Handler:    corsMiddleware(wtMux),
+		TLSConfig:  tlsConfig,
+		QUICConfig: qc,
+	}
+	webtransport.ConfigureHTTP3Server(h3srv)
+
 	s.wtSrv = &webtransport.Server{
-		H3: http3.Server{
-			Addr:      s.config.Addr,
-			Handler:   corsMiddleware(wtMux),
-			TLSConfig: tlsConfig,
-			QUICConfig: &quic.Config{
-				MaxIdleTimeout: 30 * time.Second,
-				Allow0RTT:      true,
-			},
-		},
+		H3: h3srv,
 		// SECURITY: CheckOrigin accepts all origins. This is intentional for
 		// development and local-network use. Production deployments behind a
 		// reverse proxy should enforce origin checks at the proxy layer.
@@ -372,8 +406,9 @@ type statsMessage struct {
 }
 
 type certHashResponse struct {
-	Hash string `json:"hash"`
-	Addr string `json:"addr"`
+	Hash    string `json:"hash"`
+	Addr    string `json:"addr"`
+	Trusted bool   `json:"trusted"`
 }
 
 func (s *Server) handleMoQ(w http.ResponseWriter, r *http.Request) {
@@ -394,6 +429,10 @@ func (s *Server) handleMoQ(w http.ResponseWriter, r *http.Request) {
 	relay.AddViewer(moqSession)
 	defer relay.RemoveViewer(moqSession.ID())
 
+	if s.config.OnViewerAdded != nil {
+		s.config.OnViewerAdded(streamKey)
+	}
+
 	_ = streamKey // used during setup; kept for clarity
 	if err := moqSession.Run(session.Context()); err != nil {
 		slog.Debug("moq session ended", "session", moqSession.ID(), "error", err)
@@ -403,7 +442,7 @@ func (s *Server) handleMoQ(w http.ResponseWriter, r *http.Request) {
 // upgradeMoQ upgrades the HTTP request to a WebTransport session and accepts
 // the bidirectional control stream. On failure it logs, closes the session,
 // and returns a non-nil error.
-func (s *Server) upgradeMoQ(w http.ResponseWriter, r *http.Request) (*webtransport.Session, webtransport.Stream, error) {
+func (s *Server) upgradeMoQ(w http.ResponseWriter, r *http.Request) (*webtransport.Session, *webtransport.Stream, error) {
 	session, err := s.wtSrv.Upgrade(w, r)
 	if err != nil {
 		slog.Error("webtransport upgrade failed (moq)", "error", err)
@@ -425,7 +464,7 @@ func (s *Server) upgradeMoQ(w http.ResponseWriter, r *http.Request) (*webtranspo
 // setupMoQ performs the MoQ handshake, resolves the stream key (from URL query
 // or PATH parameter), and returns the relay and session. On failure it logs,
 // closes the session, and returns a non-nil error.
-func (s *Server) setupMoQ(r *http.Request, session *webtransport.Session, controlStream webtransport.Stream) (string, *Relay, *MoQSession, error) {
+func (s *Server) setupMoQ(r *http.Request, session *webtransport.Session, controlStream *webtransport.Stream) (string, *Relay, *MoQSession, error) {
 	streamKey := r.URL.Query().Get("stream")
 
 	relay := s.GetRelay(streamKey)
@@ -443,7 +482,8 @@ func (s *Server) setupMoQ(r *http.Request, session *webtransport.Session, contro
 		Relay:              relay,
 		StatsProvider:      s.GetPipeline,
 		ControlBroadcaster: s.controlBroadcaster,
-		OnDatagram:         s.config.OnDatagram,
+		OnDatagram:            s.config.OnDatagram,
+		OnBidirectionalStream: s.config.OnBidirectionalStream,
 	})
 
 	pathKey, err := moqSession.handleSetup()
@@ -519,8 +559,9 @@ func (s *Server) handleStreamDebug(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCertHash(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, certHashResponse{
-		Hash: s.config.Cert.FingerprintBase64(),
-		Addr: s.config.Addr,
+		Hash:    s.config.Cert.FingerprintBase64(),
+		Addr:    s.config.Addr,
+		Trusted: s.config.ExternalCert,
 	})
 }
 

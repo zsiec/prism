@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -12,10 +13,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	webtransport "github.com/quic-go/webtransport-go"
 	"github.com/zsiec/ccx"
 	"github.com/zsiec/prism/media"
 	"github.com/zsiec/prism/moq"
-	"github.com/zsiec/prism/webtransport"
 )
 
 // moqTrackSub holds state for a single track subscription within a MoQ session.
@@ -46,13 +47,14 @@ type MoQSession struct {
 	log                *slog.Logger
 	streamKey          string
 	session            *webtransport.Session
-	control            webtransport.Stream
+	control            io.ReadWriter
 	controlReader      *bufio.Reader // persistent buffered reader for control stream
 	relay              *Relay
 	statsProvider      StatsProviderFunc
 	controlBroadcaster *ControlBroadcaster
-	onDatagram         func(streamKey string, data []byte)
-	controlMu          sync.Mutex
+	onDatagram            func(streamKey string, data []byte) []byte
+	onBidirectionalStream func(streamKey string, stream io.ReadWriteCloser)
+	controlMu             sync.Mutex
 
 	mu             sync.RWMutex
 	subscriptions  map[string]*moqTrackSub // key: trackName
@@ -76,7 +78,7 @@ type MoQSession struct {
 type MoQSessionConfig struct {
 	ID                 string
 	Session            *webtransport.Session
-	Control            webtransport.Stream
+	Control            io.ReadWriter
 	StreamKey          string
 	Relay              *Relay
 	StatsProvider      StatsProviderFunc
@@ -84,8 +86,15 @@ type MoQSessionConfig struct {
 
 	// OnDatagram is called when a WebTransport datagram arrives from a viewer.
 	// The callback receives the viewer's stream key and the raw datagram bytes.
+	// If the callback returns a non-nil []byte, the response is sent back to
+	// the same session as a datagram (used for ping/pong clock sync).
 	// Called from the session's datagram read goroutine — must not block.
-	OnDatagram func(streamKey string, data []byte)
+	OnDatagram func(streamKey string, data []byte) []byte
+
+	// OnBidirectionalStream is called when a viewer opens a new bidirectional
+	// WebTransport stream. The callback receives the stream key and the stream.
+	// It runs in its own goroutine per stream and should return when done.
+	OnBidirectionalStream func(streamKey string, stream io.ReadWriteCloser)
 }
 
 // NewMoQSession creates a new MoQ session for the given stream key.
@@ -100,8 +109,9 @@ func NewMoQSession(cfg MoQSessionConfig) *MoQSession {
 		relay:              cfg.Relay,
 		statsProvider:      cfg.StatsProvider,
 		controlBroadcaster: cfg.ControlBroadcaster,
-		onDatagram:         cfg.OnDatagram,
-		subscriptions:      make(map[string]*moqTrackSub),
+		onDatagram:            cfg.OnDatagram,
+		onBidirectionalStream: cfg.OnBidirectionalStream,
+		subscriptions:         make(map[string]*moqTrackSub),
 	}
 }
 
@@ -171,6 +181,7 @@ func (m *MoQSession) Run(ctx context.Context) error {
 
 	go m.readControlLoop(ctx)
 	go m.readDatagramLoop(ctx)
+	go m.acceptBidirectionalStreams(ctx)
 
 	<-ctx.Done()
 
@@ -251,7 +262,30 @@ func (m *MoQSession) readDatagramLoop(ctx context.Context) {
 			}
 			return
 		}
-		m.onDatagram(m.streamKey, data)
+		if resp := m.onDatagram(m.streamKey, data); resp != nil {
+			if err := m.session.SendDatagram(resp); err != nil {
+				m.log.Debug("datagram response send error", "error", err)
+			}
+		}
+	}
+}
+
+// acceptBidirectionalStreams accepts additional bidirectional streams from the
+// WebTransport session (beyond the initial MoQ control stream) and dispatches
+// each to the onBidirectionalStream callback in its own goroutine.
+func (m *MoQSession) acceptBidirectionalStreams(ctx context.Context) {
+	if m.onBidirectionalStream == nil || m.session == nil {
+		return
+	}
+	for {
+		stream, err := m.session.AcceptStream(ctx)
+		if err != nil {
+			if ctx.Err() == nil {
+				m.log.Debug("bidi stream accept error", "error", err)
+			}
+			return
+		}
+		go m.onBidirectionalStream(m.streamKey, stream)
 	}
 }
 
@@ -497,7 +531,7 @@ func (m *MoQSession) Stats() ViewerStats {
 // --- Write loops ---
 
 func (m *MoQSession) writeVideoLoop(ctx context.Context, sub *moqTrackSub) {
-	var currentStream webtransport.SendStream
+	var currentStream *webtransport.SendStream
 	var currentGroupID uint32
 
 	closeStream := func() {
@@ -521,7 +555,13 @@ func (m *MoQSession) writeVideoLoop(ctx context.Context, sub *moqTrackSub) {
 				closeStream()
 				currentGroupID = frame.GroupID
 
+				t0 := time.Now()
 				stream, err := m.session.OpenUniStreamSync(ctx)
+				if openDur := time.Since(t0); openDur > 50*time.Millisecond {
+					m.log.Warn("video stream open slow",
+						"duration_ms", openDur.Milliseconds(),
+						"group", currentGroupID)
+				}
 				if err != nil {
 					m.log.Debug("video stream open failed", "error", err)
 					return
@@ -540,7 +580,15 @@ func (m *MoQSession) writeVideoLoop(ctx context.Context, sub *moqTrackSub) {
 				continue
 			}
 
+			t0 := time.Now()
 			n, err := sub.writer.WriteVideoFrame(currentStream, frame)
+			if writeDur := time.Since(t0); writeDur > 50*time.Millisecond {
+				m.log.Warn("video frame write slow",
+					"duration_ms", writeDur.Milliseconds(),
+					"bytes", n,
+					"keyframe", frame.IsKeyframe,
+					"group", currentGroupID)
+			}
 			if err != nil {
 				closeStream()
 				m.log.Debug("video frame write failed", "error", err)
@@ -553,7 +601,7 @@ func (m *MoQSession) writeVideoLoop(ctx context.Context, sub *moqTrackSub) {
 }
 
 func (m *MoQSession) writeAudioLoop(ctx context.Context, sub *moqTrackSub) {
-	var stream webtransport.SendStream
+	var stream *webtransport.SendStream
 	defer func() {
 		if stream != nil {
 			stream.Close()
