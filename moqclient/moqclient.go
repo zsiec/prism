@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"io"
 	"sync/atomic"
@@ -54,6 +55,16 @@ type Stats struct {
 	AVSkewMs   float64 `json:"avSkewMs"`
 	AVValid    bool    `json:"avValid"`
 	ElapsedSec float64 `json:"elapsedSec"`
+
+	// Ancillary-signal survival (P4.5): closed captions ride a dedicated MoQ
+	// track (frame-level, like video); SCTE-35 ad-markers and SMPTE timecode ride
+	// the periodic "stats" track (the out-of-band metadata channel). Under
+	// impairment these answer "did the captions/ad-markers survive the link?".
+	CaptionFrames  int64  `json:"captionFrames"`  // caption frames delivered glass-to-glass
+	StatsSnapshots int64  `json:"statsSnapshots"` // metadata-channel snapshots received
+	SCTE35Events   int64  `json:"scte35Events"`   // splice events the server signalled (via stats)
+	CaptionTotal   int64  `json:"captionTotal"`   // server's caption-frame count (via stats)
+	Timecode       string `json:"timecode"`       // latest SMPTE timecode (via stats)
 }
 
 // Subscriber holds a live raw-QUIC MoQ subscription to one stream's video +
@@ -64,12 +75,18 @@ type Subscriber struct {
 	controlReader *bufio.Reader
 	videoAlias    uint64
 	audioAlias    uint64
+	captionAlias  uint64
+	statsAlias    uint64
 	start         time.Time
 
 	videoFrames, keyFrames, groups, videoBytes atomic.Int64
 	audioFrames, audioBytes                    atomic.Int64
 	firstFrameNs, firstKeyframeNs              atomic.Int64
 	lastVideoUs, lastAudioUs                   atomic.Int64
+
+	captionFrames, statsSnapshots atomic.Int64
+	scte35Events, captionTotal    atomic.Int64
+	timecode                      atomic.Pointer[string]
 }
 
 // Dial connects to a raw-QUIC MoQ server at addr, performs the MoQ setup, and
@@ -109,13 +126,17 @@ func Dial(ctx context.Context, addr, streamKey string) (*Subscriber, error) {
 		}
 	}
 
-	s := &Subscriber{conn: conn, control: control, controlReader: cr, videoAlias: noAlias, audioAlias: noAlias}
+	s := &Subscriber{conn: conn, control: control, controlReader: cr,
+		videoAlias: noAlias, audioAlias: noAlias, captionAlias: noAlias, statsAlias: noAlias}
 
-	// Subscribe video (request 0) + audio0 (request 1).
-	for _, t := range []struct {
+	// Subscribe video (0) + audio0 (1) + captions (2) + stats (3). Captions and
+	// stats are the ancillary-survival channels (closed captions; SCTE-35 +
+	// timecode), tolerated-absent like audio.
+	tracks := []struct {
 		rid  uint64
 		name string
-	}{{0, "video"}, {1, "audio0"}} {
+	}{{0, "video"}, {1, "audio0"}, {2, "captions"}, {3, "stats"}}
+	for _, t := range tracks {
 		sub := moq.Subscribe{
 			RequestID: t.rid, Namespace: []string{"prism", streamKey}, TrackName: t.name,
 			Priority: 0, GroupOrder: moq.GroupOrderDescending, Forward: 1, FilterType: moq.FilterLatestObject,
@@ -124,8 +145,8 @@ func Dial(ctx context.Context, addr, streamKey string) (*Subscriber, error) {
 			return nil, fmt.Errorf("write SUBSCRIBE %s: %w", t.name, err)
 		}
 	}
-	// Collect a response (OK or ERROR) for each of the two subscribes.
-	for got := 0; got < 2; {
+	// Collect a response (OK or ERROR) for each subscribe.
+	for got := 0; got < len(tracks); {
 		mt, payload, err := moq.ReadControlMsg(cr)
 		if err != nil {
 			return nil, fmt.Errorf("read SUBSCRIBE response: %w", err)
@@ -141,10 +162,14 @@ func Dial(ctx context.Context, addr, streamKey string) (*Subscriber, error) {
 				s.videoAlias = sok.TrackAlias
 			case 1:
 				s.audioAlias = sok.TrackAlias
+			case 2:
+				s.captionAlias = sok.TrackAlias
+			case 3:
+				s.statsAlias = sok.TrackAlias
 			}
 			got++
 		case moq.MsgSubscribeError:
-			got++ // a track was refused (e.g. no audio); its alias stays the sentinel
+			got++ // a track was refused (e.g. no captions); its alias stays the sentinel
 		}
 	}
 	if s.videoAlias == noAlias {
@@ -198,7 +223,9 @@ func (s *Subscriber) readStream(uni quic.ReceiveStream) {
 
 	isVideo := trackAlias == s.videoAlias
 	isAudio := trackAlias == s.audioAlias
-	if !isVideo && !isAudio {
+	isCaption := trackAlias == s.captionAlias
+	isStats := trackAlias == s.statsAlias
+	if !isVideo && !isAudio && !isCaption && !isStats {
 		return
 	}
 	if isVideo {
@@ -223,14 +250,21 @@ func (s *Subscriber) readStream(uni quic.ReceiveStream) {
 		if err != nil {
 			return
 		}
+		var payload []byte
 		if payLen > 0 {
-			if _, err := br.Discard(int(payLen)); err != nil {
+			if isStats { // the stats track's payload is the JSON snapshot we parse
+				payload = make([]byte, payLen)
+				if _, err := io.ReadFull(br, payload); err != nil {
+					return
+				}
+			} else if _, err := br.Discard(int(payLen)); err != nil {
 				return
 			}
 		}
 		info := parseExts(exts)
 		now := time.Since(s.start).Nanoseconds()
-		if isVideo {
+		switch {
+		case isVideo:
 			s.videoFrames.Add(1)
 			s.videoBytes.Add(int64(payLen))
 			s.firstFrameNs.CompareAndSwap(0, now)
@@ -241,13 +275,47 @@ func (s *Subscriber) readStream(uni quic.ReceiveStream) {
 				s.keyFrames.Add(1)
 				s.firstKeyframeNs.CompareAndSwap(0, now)
 			}
-		} else {
+		case isAudio:
 			s.audioFrames.Add(1)
 			s.audioBytes.Add(int64(payLen))
 			if info.hasCapture {
 				s.lastAudioUs.Store(int64(info.captureUs))
 			}
+		case isCaption:
+			s.captionFrames.Add(1) // a caption frame survived glass-to-glass
+		case isStats:
+			s.statsSnapshots.Add(1)
+			s.parseStats(payload)
 		}
+	}
+}
+
+// statsWire is the subset of Prism's "stats" track JSON snapshot we read: the
+// SCTE-35 / caption / timecode counters that carry the ancillary signals.
+type statsWire struct {
+	Stats struct {
+		Video struct {
+			Timecode string `json:"timecode"`
+		} `json:"video"`
+		Captions struct {
+			TotalFrames int64 `json:"totalFrames"`
+		} `json:"captions"`
+		SCTE35 struct {
+			TotalEvents int64 `json:"totalEvents"`
+		} `json:"scte35"`
+	} `json:"stats"`
+}
+
+func (s *Subscriber) parseStats(payload []byte) {
+	var w statsWire
+	if json.Unmarshal(payload, &w) != nil {
+		return
+	}
+	s.scte35Events.Store(w.Stats.SCTE35.TotalEvents)
+	s.captionTotal.Store(w.Stats.Captions.TotalFrames)
+	if w.Stats.Video.Timecode != "" {
+		tc := w.Stats.Video.Timecode
+		s.timecode.Store(&tc)
 	}
 }
 
@@ -311,6 +379,13 @@ func (s *Subscriber) Stats() Stats {
 	if st.VideoFrames > 0 && st.AudioFrames > 0 {
 		st.AVValid = true
 		st.AVSkewMs = float64(s.lastVideoUs.Load()-s.lastAudioUs.Load()) / 1000
+	}
+	st.CaptionFrames = s.captionFrames.Load()
+	st.StatsSnapshots = s.statsSnapshots.Load()
+	st.SCTE35Events = s.scte35Events.Load()
+	st.CaptionTotal = s.captionTotal.Load()
+	if tc := s.timecode.Load(); tc != nil {
+		st.Timecode = *tc
 	}
 	return st
 }

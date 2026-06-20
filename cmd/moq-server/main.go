@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -46,7 +47,12 @@ func main() {
 	defer cancel()
 
 	relay := distribution.NewRelay()
-	go feed(ctx, flag.Arg(0), *stream, relay, *loop, *rate)
+	// Track the current pipeline so subscribers' "stats" track (SCTE-35 / caption /
+	// timecode counts) and "captions" track resolve to the live demux. feed swaps
+	// it each loop iteration; the provider returns whatever is current.
+	var curPipe pipelineHolder
+	go feed(ctx, flag.Arg(0), *stream, relay, *loop, *rate, &curPipe)
+	statsProvider := func(string) distribution.StatsProvider { return curPipe.get() }
 
 	tlsConf := &tls.Config{Certificates: []tls.Certificate{cert.TLSCert}, NextProtos: []string{moqclient.ALPN}}
 	ln, err := quic.ListenAddr(*addr, tlsConf, &quic.Config{MaxIdleTimeout: 30 * time.Second})
@@ -62,7 +68,7 @@ func main() {
 			return
 		}
 		go func() {
-			if err := distribution.RunRawQUICSession(ctx, conn, *stream, relay, nil); err != nil {
+			if err := distribution.RunRawQUICSession(ctx, conn, *stream, relay, statsProvider); err != nil {
 				slog.Debug("session ended", "error", err)
 			}
 		}()
@@ -73,7 +79,7 @@ func main() {
 // looping so subscribers always have media to receive. rateMbps > 0 paces the
 // byte feed so the demux produces frames at a realistic streaming bitrate
 // (unpaced file ingest otherwise rushes the whole clip through in a burst).
-func feed(ctx context.Context, path, stream string, relay *distribution.Relay, loop bool, rateMbps float64) {
+func feed(ctx context.Context, path, stream string, relay *distribution.Relay, loop bool, rateMbps float64, holder *pipelineHolder) {
 	for {
 		f, err := os.Open(path)
 		if err != nil {
@@ -85,12 +91,30 @@ func feed(ctx context.Context, path, stream string, relay *distribution.Relay, l
 		}
 		p := pipeline.New(stream, src, relay)
 		p.SetProtocol("File")
+		holder.set(p)
 		_ = p.Run(ctx)
 		f.Close()
 		if !loop || ctx.Err() != nil {
 			return
 		}
 	}
+}
+
+// pipelineHolder publishes the current pipeline so the MoQ "stats"/"captions"
+// tracks resolve to the live demux across feed's loop iterations.
+type pipelineHolder struct {
+	mu sync.Mutex
+	p  *pipeline.Pipeline
+}
+
+func (h *pipelineHolder) set(p *pipeline.Pipeline) { h.mu.Lock(); h.p = p; h.mu.Unlock() }
+func (h *pipelineHolder) get() distribution.StatsProvider {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.p == nil {
+		return nil
+	}
+	return h.p
 }
 
 // pacedReader throttles reads to bytesPerSec so a file source feeds the pipeline
