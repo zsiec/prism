@@ -13,9 +13,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -32,6 +35,7 @@ const (
 	moqStreamTypeSubgroup = 0x0d // MoQ subgroup data stream (Prism's writer)
 	locCaptureTimestamp   = 2    // LOC ext (even): varint microseconds (PTS)
 	locVideoFrameMarking  = 4    // LOC ext (even): RFC 9626 flags; bit 0x20 = keyframe
+	locExtVideoConfig     = 13   // LOC ext (odd): AVCDecoderConfigurationRecord on keyframes
 	vfmKeyframeBit        = 0x20
 
 	noAlias = ^uint64(0) // sentinel: track not subscribed / refused
@@ -87,6 +91,107 @@ type Subscriber struct {
 	captionFrames, statsSnapshots atomic.Int64
 	scte35Events, captionTotal    atomic.Int64
 	timecode                      atomic.Pointer[string]
+
+	// optional glass-to-glass video dump (the "what survived" filmstrip source):
+	// received video access units are accumulated per GOP and reassembled by
+	// DumpVideo into a decodable Annex-B elementary stream. Groups lost to
+	// impairment are simply absent, so a decoder renders the real freeze /
+	// macroblock / black of what actually survived the link.
+	dumpVideo  bool
+	dumpMu     sync.Mutex
+	dumpGroups map[uint64][]byte // groupID -> Annex-B access units (decode order within the GOP)
+	dumpConfig []byte            // AVCDecoderConfigurationRecord from LOC ext 13 (first keyframe seen)
+}
+
+// EnableVideoDump turns on per-GOP capture of received video access units. Call
+// it before Run; after the run window, DumpVideo writes the decodable stream.
+func (s *Subscriber) EnableVideoDump() {
+	s.dumpVideo = true
+	s.dumpGroups = make(map[uint64][]byte)
+}
+
+// DumpVideo writes the captured reception as a decodable Annex-B H.264 elementary
+// stream: SPS/PPS (from the AVCDecoderConfigurationRecord) followed by the
+// received access units in GOP order. Missing groups are absent by design — that
+// gap IS the impairment, rendered honestly by any decoder.
+func (s *Subscriber) DumpVideo(w io.Writer) error {
+	s.dumpMu.Lock()
+	defer s.dumpMu.Unlock()
+	if hdr := avcConfigToAnnexB(s.dumpConfig); len(hdr) > 0 {
+		if _, err := w.Write(hdr); err != nil {
+			return err
+		}
+	}
+	ids := make([]uint64, 0, len(s.dumpGroups))
+	for id := range s.dumpGroups {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	for _, id := range ids {
+		if _, err := w.Write(s.dumpGroups[id]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// avc1ToAnnexB converts a length-prefixed (AVC1/ISO-14496-15) access unit — the
+// MoQ video object payload format — to Annex-B (start-code framed) for ffmpeg.
+func avc1ToAnnexB(p []byte) []byte {
+	var out []byte
+	for len(p) >= 4 {
+		n := int(binary.BigEndian.Uint32(p))
+		p = p[4:]
+		if n < 0 || n > len(p) {
+			break
+		}
+		out = append(out, 0, 0, 0, 1)
+		out = append(out, p[:n]...)
+		p = p[n:]
+	}
+	return out
+}
+
+// avcConfigToAnnexB extracts SPS+PPS from an AVCDecoderConfigurationRecord and
+// returns them as Annex-B NAL units (the decoder config the stream needs first).
+func avcConfigToAnnexB(cfg []byte) []byte {
+	if len(cfg) < 6 {
+		return nil
+	}
+	var out []byte
+	p := cfg[5:] // skip configurationVersion(1) + profile/compat/level(3) + lengthSizeMinusOne(1)
+	emit := func(n int) bool {
+		if len(p) < 2 {
+			return false
+		}
+		ln := int(binary.BigEndian.Uint16(p))
+		p = p[2:]
+		if ln > len(p) {
+			return false
+		}
+		out = append(out, 0, 0, 0, 1)
+		out = append(out, p[:ln]...)
+		p = p[ln:]
+		return true
+	}
+	numSPS := int(p[0] & 0x1f)
+	p = p[1:]
+	for i := 0; i < numSPS; i++ {
+		if !emit(i) {
+			return out
+		}
+	}
+	if len(p) < 1 {
+		return out
+	}
+	numPPS := int(p[0])
+	p = p[1:]
+	for i := 0; i < numPPS; i++ {
+		if !emit(i) {
+			return out
+		}
+	}
+	return out
 }
 
 // Dial connects to a raw-QUIC MoQ server at addr, performs the MoQ setup, and
@@ -212,9 +317,14 @@ func (s *Subscriber) readStream(uni quic.ReceiveStream) {
 	if err != nil {
 		return
 	}
+	var groupID uint64
 	for i := 0; i < 2; i++ { // group id, subgroup id
-		if _, err := quicvarint.Read(br); err != nil {
+		v, err := quicvarint.Read(br)
+		if err != nil {
 			return
+		}
+		if i == 0 {
+			groupID = v
 		}
 	}
 	if _, err := br.ReadByte(); err != nil { // publisher priority
@@ -252,7 +362,7 @@ func (s *Subscriber) readStream(uni quic.ReceiveStream) {
 		}
 		var payload []byte
 		if payLen > 0 {
-			if isStats { // the stats track's payload is the JSON snapshot we parse
+			if isStats || (isVideo && s.dumpVideo) { // stats JSON snapshot, or video bytes for the dump
 				payload = make([]byte, payLen)
 				if _, err := io.ReadFull(br, payload); err != nil {
 					return
@@ -274,6 +384,16 @@ func (s *Subscriber) readStream(uni quic.ReceiveStream) {
 			if info.keyframe {
 				s.keyFrames.Add(1)
 				s.firstKeyframeNs.CompareAndSwap(0, now)
+			}
+			if s.dumpVideo { // accumulate the surviving access unit into its GOP
+				s.dumpMu.Lock()
+				if s.dumpConfig == nil && len(info.config) > 0 {
+					s.dumpConfig = info.config
+				}
+				if len(payload) > 0 {
+					s.dumpGroups[groupID] = append(s.dumpGroups[groupID], avc1ToAnnexB(payload)...)
+				}
+				s.dumpMu.Unlock()
 			}
 		case isAudio:
 			s.audioFrames.Add(1)
@@ -323,6 +443,7 @@ type objInfo struct {
 	keyframe   bool
 	captureUs  uint64
 	hasCapture bool
+	config     []byte // AVCDecoderConfigurationRecord (LOC ext 13), when present
 }
 
 // parseExts reads the LOC extension list (capture timestamp + frame marking).
@@ -339,7 +460,13 @@ func parseExts(exts []byte) objInfo {
 			if err != nil {
 				return info
 			}
-			if _, err := r.Seek(int64(n), io.SeekCurrent); err != nil {
+			if id == locExtVideoConfig { // capture the decoder config for the dump
+				buf := make([]byte, n)
+				if _, err := io.ReadFull(r, buf); err != nil {
+					return info
+				}
+				info.config = buf
+			} else if _, err := r.Seek(int64(n), io.SeekCurrent); err != nil {
 				return info
 			}
 			continue

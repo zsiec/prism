@@ -27,6 +27,7 @@ func main() {
 	stream := flag.String("stream", "file", "stream key")
 	dur := flag.Duration("dur", 8*time.Second, "how long to receive before reporting")
 	interval := flag.Duration("interval", 0, "if >0, emit a one-line JSON Stats snapshot every interval (live feed)")
+	dump := flag.String("dump", "", "if set, write the received video as a decodable Annex-B .h264 (the glass-to-glass 'what survived' stream)")
 	flag.Parse()
 
 	ctx, cancel := context.WithTimeout(context.Background(), *dur+15*time.Second)
@@ -36,6 +37,9 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "moq-sub: dial:", err)
 		os.Exit(1)
+	}
+	if *dump != "" {
+		sub.EnableVideoDump()
 	}
 
 	runCtx, runCancel := context.WithTimeout(ctx, *dur)
@@ -61,6 +65,16 @@ func main() {
 
 	<-runCtx.Done()
 	st := sub.Stats()
+	if *dump != "" {
+		if f, err := os.Create(*dump); err == nil {
+			if derr := sub.DumpVideo(f); derr != nil {
+				fmt.Fprintln(os.Stderr, "moq-sub: dump:", derr)
+			}
+			_ = f.Close()
+		} else {
+			fmt.Fprintln(os.Stderr, "moq-sub: dump:", err)
+		}
+	}
 	sub.Close()
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
