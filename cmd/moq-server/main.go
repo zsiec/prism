@@ -80,6 +80,17 @@ func main() {
 // byte feed so the demux produces frames at a realistic streaming bitrate
 // (unpaced file ingest otherwise rushes the whole clip through in a burst).
 func feed(ctx context.Context, path, stream string, relay *distribution.Relay, loop bool, rateMbps float64, holder *pipelineHolder) {
+	// "-" ingests an MPEG-TS stream from stdin — the RIST glass-to-glass path:
+	// a harness pipes the (ARQ-recovered) TS from a RIST receiver into us, so the
+	// same demux -> MoQ pipeline serves RIST-contributed media. Single pass (stdin
+	// can't be reopened); the upstream source provides continuity by looping.
+	if path == "-" {
+		p := pipeline.New(stream, os.Stdin, relay)
+		p.SetProtocol("RIST")
+		holder.set(p)
+		_ = p.Run(ctx)
+		return
+	}
 	for {
 		f, err := os.Open(path)
 		if err != nil {
