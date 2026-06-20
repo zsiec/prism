@@ -7,7 +7,6 @@ import (
 	"fmt"
 
 	"github.com/quic-go/quic-go/quicvarint"
-	"github.com/zsiec/prism/webtransport"
 )
 
 // moqCatalog is the top-level catalog structure per draft-ietf-moq-catalogformat-01.
@@ -115,7 +114,7 @@ func buildMoQCatalog(streamKey string, relay *Relay, controlEnabled bool) ([]byt
 
 // writeCatalogObject opens a uni-stream and writes the catalog as a single
 // MoQ object (subgroup header + object with payload).
-func writeCatalogObject(ctx context.Context, session *webtransport.Session, catalogAlias uint64, catalogJSON []byte) error {
+func writeCatalogObject(ctx context.Context, session moqConn, catalogAlias uint64, catalogJSON []byte) error {
 	stream, err := session.OpenUniStreamSync(ctx)
 	if err != nil {
 		return fmt.Errorf("open catalog stream: %w", err)

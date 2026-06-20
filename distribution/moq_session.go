@@ -34,6 +34,16 @@ type moqTrackSub struct {
 // Compile-time interface checks.
 var _ Viewer = (*MoQSession)(nil)
 
+// moqConn is the subset of a viewer's transport that a MoQ session needs:
+// opening unidirectional streams for media objects, and receiving datagrams.
+// *webtransport.Session (the browser path) satisfies it; so does the raw-QUIC
+// adapter (moq_rawquic.go) used by the headless Go subscriber. This is the seam
+// that lets the SAME session logic serve both transports.
+type moqConn interface {
+	OpenUniStreamSync(ctx context.Context) (webtransport.SendStream, error)
+	ReceiveDatagram(ctx context.Context) ([]byte, error)
+}
+
 // StatsProviderFunc resolves the StatsProvider for a stream key lazily,
 // since the pipeline may not exist when the MoQ session is created.
 type StatsProviderFunc func(streamKey string) StatsProvider
@@ -45,7 +55,7 @@ type MoQSession struct {
 	id                 string
 	log                *slog.Logger
 	streamKey          string
-	session            *webtransport.Session
+	session            moqConn
 	control            webtransport.Stream
 	controlReader      *bufio.Reader // persistent buffered reader for control stream
 	relay              *Relay
@@ -75,7 +85,7 @@ type MoQSession struct {
 // MoQSessionConfig holds the parameters for creating a new MoQ session.
 type MoQSessionConfig struct {
 	ID                 string
-	Session            *webtransport.Session
+	Session            moqConn
 	Control            webtransport.Stream
 	StreamKey          string
 	Relay              *Relay
