@@ -1,10 +1,11 @@
 // Package moqclient is a headless Go subscriber for Prism's MoQ media, over raw
 // QUIC (the transport RunRawQUICSession serves). It performs the draft-15
-// CLIENT_SETUP / SUBSCRIBE handshake, receives the video track's objects on
-// unidirectional QUIC streams, and reports glass-to-glass reception stats —
-// frames and keyframes delivered, bytes, startup latency. It is the automatable
-// viewer the browser-only player could not be, so a network-impairment harness
-// can grade what survives QUIC loss recovery without a browser.
+// CLIENT_SETUP / SUBSCRIBE handshake, receives the video AND audio tracks'
+// objects on unidirectional QUIC streams, and reports glass-to-glass reception
+// stats — frames/keyframes delivered, audio delivered, A/V sync skew, bytes,
+// startup latency. It is the automatable viewer the browser-only player could
+// not be, so a network-impairment harness can grade what survives QUIC loss
+// recovery (and whether the picture stays in sync) without a browser.
 package moqclient
 
 import (
@@ -26,41 +27,55 @@ import (
 // negotiate.
 const ALPN = "prism-moq-quic"
 
-// moqStreamTypeSubgroup is the MoQ data stream type Prism's writer uses
-// (subgroup with explicit subgroup id + per-object extensions).
-const moqStreamTypeSubgroup = 0x0d
+const (
+	moqStreamTypeSubgroup = 0x0d // MoQ subgroup data stream (Prism's writer)
+	locCaptureTimestamp   = 2    // LOC ext (even): varint microseconds (PTS)
+	locVideoFrameMarking  = 4    // LOC ext (even): RFC 9626 flags; bit 0x20 = keyframe
+	vfmKeyframeBit        = 0x20
 
-// locVideoFrameMarking is the LOC extension id (even -> varint value) carrying
-// the RFC 9626 frame-marking flags; bit 0x20 (I) marks a keyframe.
-const locVideoFrameMarking = 4
-const vfmKeyframeBit = 0x20
+	noAlias = ^uint64(0) // sentinel: track not subscribed / refused
+)
 
 // Stats is a glass-to-glass reception snapshot.
 type Stats struct {
 	VideoFrames     int64   `json:"videoFrames"`
 	KeyFrames       int64   `json:"keyFrames"`
 	Groups          int64   `json:"groups"` // distinct GOP streams received
-	Bytes           int64   `json:"bytes"`
+	VideoBytes      int64   `json:"videoBytes"`
+	AudioFrames     int64   `json:"audioFrames"`
+	AudioBytes      int64   `json:"audioBytes"`
+	Bytes           int64   `json:"bytes"` // video + audio
 	FirstFrameMs    float64 `json:"firstFrameMs"`
 	FirstKeyframeMs float64 `json:"firstKeyframeMs"`
-	ElapsedSec      float64 `json:"elapsedSec"`
+	// AVSkewMs is (latest video PTS - latest audio PTS) in ms: how far video and
+	// audio playback positions have drifted apart. ~0 when both tracks are
+	// delivered in step; grows when one track stalls under impairment. Valid only
+	// when both tracks delivered (AVValid).
+	AVSkewMs   float64 `json:"avSkewMs"`
+	AVValid    bool    `json:"avValid"`
+	ElapsedSec float64 `json:"elapsedSec"`
 }
 
-// Subscriber holds a live raw-QUIC MoQ subscription to one stream's video track.
+// Subscriber holds a live raw-QUIC MoQ subscription to one stream's video +
+// audio tracks.
 type Subscriber struct {
 	conn          quic.Connection
 	control       quic.Stream
 	controlReader *bufio.Reader
 	videoAlias    uint64
+	audioAlias    uint64
 	start         time.Time
 
-	videoFrames, keyFrames, groups, bytes atomic.Int64
-	firstFrameNs, firstKeyframeNs         atomic.Int64
+	videoFrames, keyFrames, groups, videoBytes atomic.Int64
+	audioFrames, audioBytes                    atomic.Int64
+	firstFrameNs, firstKeyframeNs              atomic.Int64
+	lastVideoUs, lastAudioUs                   atomic.Int64
 }
 
 // Dial connects to a raw-QUIC MoQ server at addr, performs the MoQ setup, and
-// subscribes to the video track of streamKey. TLS verification is skipped (this
-// is a test harness against a self-signed server).
+// subscribes to the video and audio0 tracks of streamKey. A missing audio track
+// is tolerated (the audio subscribe may be refused). TLS verification is skipped
+// (test harness against a self-signed server).
 func Dial(ctx context.Context, addr, streamKey string) (*Subscriber, error) {
 	tlsConf := &tls.Config{InsecureSkipVerify: true, NextProtos: []string{ALPN}} //nolint:gosec // harness only
 	conn, err := quic.DialAddr(ctx, addr, tlsConf, &quic.Config{MaxIdleTimeout: 30 * time.Second})
@@ -73,7 +88,6 @@ func Dial(ctx context.Context, addr, streamKey string) (*Subscriber, error) {
 	}
 	cr := bufio.NewReader(control)
 
-	// CLIENT_SETUP -> wait for SERVER_SETUP.
 	cs := moq.ClientSetup{Versions: []uint64{moq.Version}, Path: streamKey, HasPath: true, MaxRequestID: 100}
 	if err := moq.WriteControlMsg(control, moq.MsgClientSetup, moq.SerializeClientSetup(cs)); err != nil {
 		return nil, fmt.Errorf("write CLIENT_SETUP: %w", err)
@@ -93,23 +107,28 @@ func Dial(ctx context.Context, addr, streamKey string) (*Subscriber, error) {
 			}
 			break
 		}
-		// ignore MAX_REQUEST_ID and anything else before SERVER_SETUP
 	}
 
-	s := &Subscriber{conn: conn, control: control, controlReader: cr}
+	s := &Subscriber{conn: conn, control: control, controlReader: cr, videoAlias: noAlias, audioAlias: noAlias}
 
-	// SUBSCRIBE video -> wait for SUBSCRIBE_OK (track alias).
-	sub := moq.Subscribe{
-		RequestID: 0, Namespace: []string{"prism", streamKey}, TrackName: "video",
-		Priority: 0, GroupOrder: moq.GroupOrderDescending, Forward: 1, FilterType: moq.FilterLatestObject,
+	// Subscribe video (request 0) + audio0 (request 1).
+	for _, t := range []struct {
+		rid  uint64
+		name string
+	}{{0, "video"}, {1, "audio0"}} {
+		sub := moq.Subscribe{
+			RequestID: t.rid, Namespace: []string{"prism", streamKey}, TrackName: t.name,
+			Priority: 0, GroupOrder: moq.GroupOrderDescending, Forward: 1, FilterType: moq.FilterLatestObject,
+		}
+		if err := moq.WriteControlMsg(control, moq.MsgSubscribe, moq.SerializeSubscribe(sub)); err != nil {
+			return nil, fmt.Errorf("write SUBSCRIBE %s: %w", t.name, err)
+		}
 	}
-	if err := moq.WriteControlMsg(control, moq.MsgSubscribe, moq.SerializeSubscribe(sub)); err != nil {
-		return nil, fmt.Errorf("write SUBSCRIBE: %w", err)
-	}
-	for {
+	// Collect a response (OK or ERROR) for each of the two subscribes.
+	for got := 0; got < 2; {
 		mt, payload, err := moq.ReadControlMsg(cr)
 		if err != nil {
-			return nil, fmt.Errorf("read SUBSCRIBE_OK: %w", err)
+			return nil, fmt.Errorf("read SUBSCRIBE response: %w", err)
 		}
 		switch mt {
 		case moq.MsgSubscribeOK:
@@ -117,17 +136,25 @@ func Dial(ctx context.Context, addr, streamKey string) (*Subscriber, error) {
 			if err != nil {
 				return nil, fmt.Errorf("parse SUBSCRIBE_OK: %w", err)
 			}
-			s.videoAlias = sok.TrackAlias
-			return s, nil
+			switch sok.RequestID {
+			case 0:
+				s.videoAlias = sok.TrackAlias
+			case 1:
+				s.audioAlias = sok.TrackAlias
+			}
+			got++
 		case moq.MsgSubscribeError:
-			return nil, fmt.Errorf("server refused video subscribe")
+			got++ // a track was refused (e.g. no audio); its alias stays the sentinel
 		}
 	}
+	if s.videoAlias == noAlias {
+		return nil, fmt.Errorf("server refused video subscribe")
+	}
+	return s, nil
 }
 
-// Run accepts the video track's data streams and counts reception until ctx is
-// cancelled or the connection ends. Each GOP arrives on its own unidirectional
-// stream (a new one per keyframe).
+// Run accepts the subscribed tracks' data streams and counts reception until ctx
+// is cancelled or the connection ends.
 func (s *Subscriber) Run(ctx context.Context) error {
 	s.start = time.Now()
 	go s.drainControl()
@@ -148,8 +175,8 @@ func (s *Subscriber) drainControl() {
 	}
 }
 
-// readStream parses one MoQ subgroup data stream: a subgroup header followed by
-// LOC objects (object id, extensions, payload), tallying video frames/keyframes.
+// readStream parses one MoQ subgroup data stream and tallies the track it
+// belongs to (video or audio), tracking keyframes and capture timestamps.
 func (s *Subscriber) readStream(uni quic.ReceiveStream) {
 	br := bufio.NewReader(uni)
 	streamType, err := quicvarint.Read(br)
@@ -160,19 +187,23 @@ func (s *Subscriber) readStream(uni quic.ReceiveStream) {
 	if err != nil {
 		return
 	}
-	if _, err := quicvarint.Read(br); err != nil { // group id
-		return
-	}
-	if _, err := quicvarint.Read(br); err != nil { // subgroup id
-		return
+	for i := 0; i < 2; i++ { // group id, subgroup id
+		if _, err := quicvarint.Read(br); err != nil {
+			return
+		}
 	}
 	if _, err := br.ReadByte(); err != nil { // publisher priority
 		return
 	}
-	if trackAlias != s.videoAlias {
-		return // only video was subscribed; ignore anything else
+
+	isVideo := trackAlias == s.videoAlias
+	isAudio := trackAlias == s.audioAlias
+	if !isVideo && !isAudio {
+		return
 	}
-	s.groups.Add(1)
+	if isVideo {
+		s.groups.Add(1)
+	}
 
 	for {
 		if _, err := quicvarint.Read(br); err != nil { // object id (EOF ends the stream)
@@ -197,59 +228,91 @@ func (s *Subscriber) readStream(uni quic.ReceiveStream) {
 				return
 			}
 		}
+		info := parseExts(exts)
 		now := time.Since(s.start).Nanoseconds()
-		s.videoFrames.Add(1)
-		s.bytes.Add(int64(payLen))
-		s.firstFrameNs.CompareAndSwap(0, now)
-		if keyframe(exts) {
-			s.keyFrames.Add(1)
-			s.firstKeyframeNs.CompareAndSwap(0, now)
+		if isVideo {
+			s.videoFrames.Add(1)
+			s.videoBytes.Add(int64(payLen))
+			s.firstFrameNs.CompareAndSwap(0, now)
+			if info.hasCapture {
+				s.lastVideoUs.Store(int64(info.captureUs))
+			}
+			if info.keyframe {
+				s.keyFrames.Add(1)
+				s.firstKeyframeNs.CompareAndSwap(0, now)
+			}
+		} else {
+			s.audioFrames.Add(1)
+			s.audioBytes.Add(int64(payLen))
+			if info.hasCapture {
+				s.lastAudioUs.Store(int64(info.captureUs))
+			}
 		}
 	}
 }
 
-// keyframe reports whether the LOC extensions carry the RFC 9626 keyframe (I)
-// bit in the Video Frame Marking extension.
-func keyframe(exts []byte) bool {
+type objInfo struct {
+	keyframe   bool
+	captureUs  uint64
+	hasCapture bool
+}
+
+// parseExts reads the LOC extension list (capture timestamp + frame marking).
+func parseExts(exts []byte) objInfo {
 	r := bytes.NewReader(exts)
+	var info objInfo
 	for r.Len() > 0 {
 		id, err := quicvarint.Read(r)
 		if err != nil {
-			return false
+			return info
 		}
-		if id%2 == 1 { // odd -> length-prefixed bytes
+		if id%2 == 1 { // odd -> length-prefixed bytes (e.g. video config)
 			n, err := quicvarint.Read(r)
 			if err != nil {
-				return false
+				return info
 			}
 			if _, err := r.Seek(int64(n), io.SeekCurrent); err != nil {
-				return false
+				return info
 			}
 			continue
 		}
 		v, err := quicvarint.Read(r) // even -> varint value
 		if err != nil {
-			return false
+			return info
 		}
-		if id == locVideoFrameMarking && v&vfmKeyframeBit != 0 {
-			return true
+		switch id {
+		case locCaptureTimestamp:
+			info.captureUs, info.hasCapture = v, true
+		case locVideoFrameMarking:
+			if v&vfmKeyframeBit != 0 {
+				info.keyframe = true
+			}
 		}
 	}
-	return false
+	return info
 }
 
 // Stats returns the reception snapshot so far.
 func (s *Subscriber) Stats() Stats {
-	ns := func(v int64) float64 { return float64(v) / 1e6 }
-	return Stats{
+	toMs := func(v int64) float64 { return float64(v) / 1e6 }
+	vbytes, abytes := s.videoBytes.Load(), s.audioBytes.Load()
+	st := Stats{
 		VideoFrames:     s.videoFrames.Load(),
 		KeyFrames:       s.keyFrames.Load(),
 		Groups:          s.groups.Load(),
-		Bytes:           s.bytes.Load(),
-		FirstFrameMs:    ns(s.firstFrameNs.Load()),
-		FirstKeyframeMs: ns(s.firstKeyframeNs.Load()),
+		VideoBytes:      vbytes,
+		AudioFrames:     s.audioFrames.Load(),
+		AudioBytes:      abytes,
+		Bytes:           vbytes + abytes,
+		FirstFrameMs:    toMs(s.firstFrameNs.Load()),
+		FirstKeyframeMs: toMs(s.firstKeyframeNs.Load()),
 		ElapsedSec:      time.Since(s.start).Seconds(),
 	}
+	if st.VideoFrames > 0 && st.AudioFrames > 0 {
+		st.AVValid = true
+		st.AVSkewMs = float64(s.lastVideoUs.Load()-s.lastAudioUs.Load()) / 1000
+	}
+	return st
 }
 
 // Close tears down the QUIC connection.
