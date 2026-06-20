@@ -53,6 +53,12 @@ if (urlStreamKey) {
 	streamKeyInput.value = urlStreamKey;
 }
 
+// Embed mode (?embed=1 or ?chrome=none): strip the app chrome and branding and
+// auto-watch the stream, leaving just the player surface for embedding in another
+// app (e.g. an impairment console). Custom CSS can target body.embed.
+const embedMode = params.has("embed") || params.get("chrome") === "none";
+if (embedMode) document.body.classList.add("embed");
+
 function initSingleMode(): void {
 	if (singlePlayer) return;
 	const maxDim = Math.max(window.innerWidth, window.innerHeight);
@@ -338,7 +344,14 @@ if (urlMode === "multi") {
 } else {
 	initSingleMode();
 	if (urlStreamKey) {
-		showClickToPlay(urlStreamKey);
+		if (embedMode) {
+			// auto-watch: the canvas renders immediately; audio resumes on first
+			// interaction (autoplay policy), which is fine for an embedded monitor.
+			lastSingleStreamKey = urlStreamKey;
+			singlePlayer!.connect(urlStreamKey);
+		} else {
+			showClickToPlay(urlStreamKey);
+		}
 	}
 }
 

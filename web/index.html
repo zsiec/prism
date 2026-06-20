@@ -907,6 +907,19 @@
 			border-radius: 2px;
 			flex-shrink: 0;
 		}
+
+		/* ─── Embed mode (?embed=1): strip the app chrome + branding, leaving just
+		   the player surface so it embeds naturally in another app. ─── */
+		body.embed { overflow: hidden; background: #000; }
+		body.embed > header,
+		body.embed > #status,
+		body.embed > #streamList,
+		body.embed > .streams,
+		body.embed #emptyState,
+		body.embed > #multiMode { display: none !important; }
+		body.embed #singleMode { padding: 0; justify-content: center; }
+		body.embed .player { max-width: none; width: 100%; margin: 0; }
+		body.embed canvas { border-radius: 0; max-height: 100vh; object-fit: contain; }
 	</style>
 </head>
 <body>
