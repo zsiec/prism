@@ -159,6 +159,9 @@ func ParseClientSetup(data []byte) (ClientSetup, error) {
 	if err != nil {
 		return cs, &ParseError{Field: "num_versions", Err: err}
 	}
+	if numVersions > uint64(r.remaining()) {
+		return cs, &ParseError{Field: "num_versions", Err: fmt.Errorf("count %d exceeds %d remaining bytes", numVersions, r.remaining())}
+	}
 
 	cs.Versions = make([]uint64, numVersions)
 	for i := uint64(0); i < numVersions; i++ {
@@ -350,6 +353,9 @@ func parseNamespaceTuple(r *bufReader) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read tuple count: %w", err)
 	}
+	if count > uint64(r.remaining()) {
+		return nil, fmt.Errorf("tuple count %d exceeds %d remaining bytes", count, r.remaining())
+	}
 
 	parts := make([]string, count)
 	for i := uint64(0); i < count; i++ {
@@ -388,6 +394,12 @@ func newBufReader(data []byte) *bufReader {
 	return &bufReader{data: data}
 }
 
+// remaining is the number of unread bytes. Used to bound element COUNTS before
+// allocating: a count can never exceed the remaining bytes (each element costs
+// at least one byte), so this caps allocation to the input size and rejects the
+// hostile "huge count/length" inputs that otherwise makeslice-panic or OOM.
+func (b *bufReader) remaining() int { return len(b.data) - b.pos }
+
 func (b *bufReader) readVarint() (uint64, error) {
 	if b.pos >= len(b.data) {
 		return 0, io.ErrUnexpectedEOF
@@ -414,10 +426,12 @@ func (b *bufReader) readVarIntBytes() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	end := b.pos + int(length)
-	if end > len(b.data) {
+	// Guard against a huge length: compare in uint64 BEFORE int(length), which
+	// would otherwise overflow to a negative end and panic on the slice.
+	if length > uint64(b.remaining()) {
 		return nil, io.ErrUnexpectedEOF
 	}
+	end := b.pos + int(length)
 	val := b.data[b.pos:end]
 	b.pos = end
 	return val, nil
