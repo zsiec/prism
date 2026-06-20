@@ -1,6 +1,9 @@
 package distribution
 
 import (
+	"crypto/sha256"
+	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -108,6 +111,87 @@ func TestHandleCertHash(t *testing.T) {
 	}
 	if resp.Hash == "" {
 		t.Fatal("hash is empty")
+	}
+}
+
+func TestHandleCertHashWithTLSConfig(t *testing.T) {
+	t.Parallel()
+
+	cert, err := certs.Generate(24 * 60 * 60 * 1e9)
+	if err != nil {
+		t.Fatalf("certs.Generate: %v", err)
+	}
+
+	tlsCfg := &tls.Config{Certificates: []tls.Certificate{cert.TLSCert}}
+	srv, err := NewServer(ServerConfig{
+		Addr:      ":0",
+		TLSConfig: tlsCfg,
+	})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	handler := srv.APIHandler()
+
+	req := httptest.NewRequest("GET", "/api/cert-hash", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var resp certHashResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	// Verify the hash matches what we'd compute from the raw DER cert.
+	fp := sha256.Sum256(cert.TLSCert.Certificate[0])
+	want := base64.StdEncoding.EncodeToString(fp[:])
+	if resp.Hash != want {
+		t.Fatalf("hash = %q, want %q", resp.Hash, want)
+	}
+}
+
+func TestHandleCertHashWithGetCertificate(t *testing.T) {
+	t.Parallel()
+
+	cert, err := certs.Generate(24 * 60 * 60 * 1e9)
+	if err != nil {
+		t.Fatalf("certs.Generate: %v", err)
+	}
+
+	tlsCfg := &tls.Config{
+		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+			return &cert.TLSCert, nil
+		},
+	}
+	srv, err := NewServer(ServerConfig{
+		Addr:      ":0",
+		TLSConfig: tlsCfg,
+	})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	handler := srv.APIHandler()
+
+	req := httptest.NewRequest("GET", "/api/cert-hash", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var resp certHashResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	fp := sha256.Sum256(cert.TLSCert.Certificate[0])
+	want := base64.StdEncoding.EncodeToString(fp[:])
+	if resp.Hash != want {
+		t.Fatalf("hash = %q, want %q", resp.Hash, want)
 	}
 }
 
@@ -265,11 +349,11 @@ func TestNewServerValidation(t *testing.T) {
 		t.Fatalf("certs.Generate: %v", err)
 	}
 
-	t.Run("missing cert", func(t *testing.T) {
+	t.Run("missing cert and tls config", func(t *testing.T) {
 		t.Parallel()
 		_, err := NewServer(ServerConfig{Addr: ":4443"})
 		if err == nil {
-			t.Fatal("expected error for missing cert")
+			t.Fatal("expected error for missing cert and tls config")
 		}
 	})
 
@@ -281,9 +365,23 @@ func TestNewServerValidation(t *testing.T) {
 		}
 	})
 
-	t.Run("valid config", func(t *testing.T) {
+	t.Run("valid config with cert", func(t *testing.T) {
 		t.Parallel()
 		srv, err := NewServer(ServerConfig{Addr: ":4443", Cert: cert})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if srv == nil {
+			t.Fatal("server is nil")
+		}
+	})
+
+	t.Run("valid config with tls config", func(t *testing.T) {
+		t.Parallel()
+		srv, err := NewServer(ServerConfig{
+			Addr:      ":4443",
+			TLSConfig: &tls.Config{Certificates: []tls.Certificate{cert.TLSCert}},
+		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

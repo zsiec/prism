@@ -2,7 +2,9 @@ package distribution
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -126,6 +128,7 @@ type ServerConfig struct {
 	Addr         string
 	WebDir       string
 	Cert         *certs.CertInfo
+	TLSConfig    *tls.Config
 	StreamLister StreamLister
 	IngestLookup IngestLookup
 	SRTPull      SRTPullFunc
@@ -180,8 +183,8 @@ type Server struct {
 // NewServer creates a distribution Server with the given configuration.
 // It returns an error if required fields are missing.
 func NewServer(config ServerConfig) (*Server, error) {
-	if config.Cert == nil {
-		return nil, errors.New("distribution: Cert is required")
+	if config.Cert == nil && config.TLSConfig == nil {
+		return nil, errors.New("distribution: either Cert or TLSConfig is required")
 	}
 	if config.Addr == "" {
 		return nil, errors.New("distribution: Addr is required")
@@ -327,8 +330,13 @@ func (s *Server) Start(ctx context.Context) error {
 	wtMux.HandleFunc("/moq", s.handleMoQ)
 	s.registerAPIRoutes(wtMux)
 
-	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{s.config.Cert.TLSCert},
+	var tlsConfig *tls.Config
+	if s.config.TLSConfig != nil {
+		tlsConfig = s.config.TLSConfig
+	} else {
+		tlsConfig = &tls.Config{
+			Certificates: []tls.Certificate{s.config.Cert.TLSCert},
+		}
 	}
 
 	s.wtSrv = &webtransport.Server{
@@ -518,10 +526,40 @@ func (s *Server) handleStreamDebug(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCertHash(w http.ResponseWriter, _ *http.Request) {
+	var hash string
+	if s.config.Cert != nil {
+		hash = s.config.Cert.FingerprintBase64()
+	} else {
+		cert, err := s.tlsCertificate()
+		if err != nil {
+			slog.Error("failed to get TLS certificate", "error", err)
+			writeError(w, http.StatusInternalServerError, "no TLS certificate available")
+			return
+		}
+		fp := sha256.Sum256(cert.Certificate[0])
+		hash = base64.StdEncoding.EncodeToString(fp[:])
+	}
 	writeJSON(w, http.StatusOK, certHashResponse{
-		Hash: s.config.Cert.FingerprintBase64(),
+		Hash: hash,
 		Addr: s.config.Addr,
 	})
+}
+
+func (s *Server) tlsCertificate() (*tls.Certificate, error) {
+	tc := s.config.TLSConfig
+	if tc.GetCertificate != nil {
+		cert, err := tc.GetCertificate(&tls.ClientHelloInfo{})
+		if err != nil {
+			return nil, err
+		}
+		if cert != nil {
+			return cert, nil
+		}
+	}
+	if len(tc.Certificates) > 0 {
+		return &tc.Certificates[0], nil
+	}
+	return nil, errors.New("no certificate in TLSConfig")
 }
 
 func (s *Server) handleSRTPullOptions(w http.ResponseWriter, _ *http.Request) {
