@@ -77,7 +77,7 @@ func main() {
 	// Create registry and SRT caller after errgroup so closures capture the
 	// errgroup-derived context, ensuring streams shut down when any component fails.
 	a.registry = ingest.NewRegistry(func(key string, input io.Reader, format ingest.InputFormat) {
-		a.handleNewStream(ctx, key, input, format)
+		a.handleNewStream(ctx, key, input, format, "SRT")
 	})
 	a.srtCaller = srtingest.NewCaller(a.registry, nil)
 
@@ -106,6 +106,18 @@ func main() {
 	}
 
 	srtSrv := srtingest.NewServer(srtAddr, a.registry, nil)
+
+	// Optional stdin ingest: pipe a recovered MPEG-TS in (STDIN_KEY=demo). This
+	// makes Prism a protocol-agnostic recovered-TS sink — the contribution
+	// transport (SRT/RIST/…) runs upstream and hands the recovered stream over
+	// stdin, so Prism needs no per-protocol ingest. STDIN_PROTO labels the source.
+	if stdinKey := envOr("STDIN_KEY", ""); stdinKey != "" {
+		stdinProto := envOr("STDIN_PROTO", "TS")
+		g.Go(func() error {
+			a.handleNewStream(ctx, stdinKey, os.Stdin, ingest.FormatMPEGTS, stdinProto)
+			return nil
+		})
+	}
 
 	apiSrv := &http.Server{
 		Addr:    apiAddr,
@@ -216,8 +228,8 @@ func (a *app) lookupIngest(key string) *distribution.IngestDebugStats {
 	}
 }
 
-func (a *app) handleNewStream(ctx context.Context, key string, input io.Reader, format ingest.InputFormat) {
-	slog.Info("new stream from ingest", "key", key)
+func (a *app) handleNewStream(ctx context.Context, key string, input io.Reader, format ingest.InputFormat, proto string) {
+	slog.Info("new stream from ingest", "key", key, "protocol", proto)
 
 	if _, created := a.mgr.Create(key); !created {
 		slog.Warn("rejecting duplicate stream connection", "key", key)
@@ -228,7 +240,7 @@ func (a *app) handleNewStream(ctx context.Context, key string, input io.Reader, 
 	relay := a.distSrv.RegisterStream(key)
 
 	p := pipeline.New(key, input, relay)
-	p.SetProtocol("SRT")
+	p.SetProtocol(proto)
 	a.distSrv.SetPipeline(key, p)
 
 	if err := p.Run(ctx); err != nil {
